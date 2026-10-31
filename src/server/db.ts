@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import fs from 'fs';
 import path from 'path';
 import {
   DayCountConvention,
@@ -100,6 +101,14 @@ export function getBootstrapSystemActor(): UserProfile {
 export function createDatabase(dbFilePath?: string): Database.Database {
   const resolvedPath =
     dbFilePath ?? process.env.SGT_DB_PATH ?? path.resolve(process.cwd(), 'sgt_database.sqlite');
+
+  if (resolvedPath !== ':memory:') {
+    const dir = path.dirname(resolvedPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
+
   const db = new Database(resolvedPath);
 
   if (resolvedPath !== ':memory:') {
@@ -996,6 +1005,28 @@ function initializeSchemaAndBaseline(db: Database.Database): void {
 
   for (const acc of systemAccounts) {
     insertAccount.run(acc.id, acc.code, acc.en, acc.kn, acc.type, acc.sub, nowIso);
+  }
+
+  // In non-test environments, ensure default administrator account (rohit / Password@123) exists
+  if (process.env.NODE_ENV !== 'test') {
+    const adminExists = db.prepare('SELECT id FROM users WHERE username = ?').get('rohit');
+    if (!adminExists) {
+      const adminPerms = JSON.stringify(Object.values(PermissionKey));
+      db.prepare(`
+        INSERT INTO users (
+          id, username, password_hash, full_name, role, permissions_json,
+          can_view_sensitive_kyc, status, last_login_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NULL, ?)
+      `).run(
+        'USR-ADMIN-ROHIT',
+        'rohit',
+        hashPassword('Password@123'),
+        'Rohit (Administrator)',
+        UserRole.OWNER,
+        adminPerms,
+        nowIso
+      );
+    }
   }
 }
 

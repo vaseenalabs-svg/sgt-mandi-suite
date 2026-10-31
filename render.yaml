@@ -16,3 +16,4 @@ services:
       name: sgt-data
       mountPath: /var/data
       sizeGB: 1
+
