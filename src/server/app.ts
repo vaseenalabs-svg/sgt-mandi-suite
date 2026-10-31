@@ -97,7 +97,8 @@ export function createApiApp(db: Database.Database): express.Express {
       if (user && user.status === 'ACTIVE') {
         return user;
       }
-      if (cleanId === 'USR-OWNER-01' && allUsers.length > 0) {
+      // In test environment, allow USR-OWNER-01 backwards compatibility for test fixtures
+      if (process.env.NODE_ENV === 'test' && cleanId === 'USR-OWNER-01' && allUsers.length > 0) {
         return allUsers[0];
       }
       throw new Error(
