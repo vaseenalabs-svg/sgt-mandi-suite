@@ -60,6 +60,7 @@ export const PartiesAndFarmersView: React.FC<PartiesAndFarmersViewProps> = ({
   onRegisterParty,
   onCheckDuplicates,
   onUpdateParty,
+  onDeleteParty,
   onInspectPartyKyc,
   onLoadPartyLedger,
 }) => {
@@ -125,6 +126,9 @@ export const PartiesAndFarmersView: React.FC<PartiesAndFarmersViewProps> = ({
   const [deleteReason, setDeleteReason] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+
+  // KYC & Signature Inspection State
+  const [inspectedParty, setInspectedParty] = useState<PartyRecord | null>(null);
   const [kycUnmasked, setKycUnmasked] = useState(false);
   const [kycError, setKycError] = useState<string | null>(null);
 

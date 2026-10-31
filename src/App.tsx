@@ -1105,7 +1105,7 @@ export default function App() {
             </button>
           </div>
         ) : settings && activeUser ? (
-          <ErrorBoundary sectionName={activeSection}>
+          <ErrorBoundary key={activeSection} sectionName={activeSection}>
             {activeSection === 'stock' && (
               <StockStatusView
                 stockStatuses={stockStatuses}

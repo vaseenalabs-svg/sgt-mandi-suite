@@ -25,6 +25,12 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error('ErrorBoundary caught an unhandled error:', error, errorInfo);
   }
 
+  componentDidUpdate(prevProps: Props): void {
+    if (this.state.hasError && prevProps.sectionName !== this.props.sectionName) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
+
   handleReload = (): void => {
     this.setState({ hasError: false, error: null });
   };
