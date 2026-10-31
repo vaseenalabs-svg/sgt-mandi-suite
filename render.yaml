@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: sgt-mandi-suite
+    env: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: node node_modules/tsx/dist/cli.mjs server.ts
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SGT_BIND_HOST
+        value: 0.0.0.0
+      - key: SGT_DB_PATH
+        value: /var/data/sgt_database.sqlite
+    disk:
+      name: sgt-data
+      mountPath: /var/data
+      sizeGB: 1

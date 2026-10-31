@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-sans: 'Public Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #F5F5F7;
+    background-image:
+      radial-gradient(at 12% 8%, rgba(224, 242, 254, 0.65) 0px, transparent 48%),
+      radial-gradient(at 88% 12%, rgba(238, 242, 255, 0.6) 0px, transparent 52%),
+      radial-gradient(at 50% 90%, rgba(240, 253, 244, 0.45) 0px, transparent 55%);
+    background-attachment: fixed;
+    color: #0F172A;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+
+  .font-mono, .tabular-nums {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.04), 0 0 0 1px rgba(15, 23, 42, 0.04);
+}
+
+.glass-subtle {
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.025), 0 0 0 1px rgba(15, 23, 42, 0.035);
+}
+
+.apple-input {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  color: #0F172A;
+  transition: all 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.apple-input:focus {
+  outline: none;
+  background: #FFFFFF;
+  border-color: #0071E3;
+  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.14);
+}
+
+@media print {
+  body {
+    background: #FFFFFF !important;
+    background-image: none !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+

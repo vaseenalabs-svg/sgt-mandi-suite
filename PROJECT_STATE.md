@@ -1,0 +1,42 @@
+# SGT Project State & Decisions Register
+
+## 1. Current Progress Summary
+- **Step 0 (SRS Analysis, Architecture, Draft Data Model, Chunked Build Plan, Decisions Register, Traceability Matrix)**: **COMPLETED & APPROVED**
+- **Chunk 1 (Foundation, RBAC, Settings, Document Numbering Engine, Audit Logging, Decimal-Safe Math, Non-Posting Calculator & Interest Preview `AT-04`, Stock Status Engine, and Production Purge Migration `001_purge_sample_data`)**: **COMPLETED & VERIFIED** (`tests/chunk1.test.ts` — 6/6 tests passing).
+- **Chunk 2 (Central Double-Entry Khata Posting Engine & Farmer/Party Master Data)**: **COMPLETED & VERIFIED** (`tests/chunk2_3_4.test.ts` — `AT-01`, `AT-13`, `AT-14`, `AT-16` passing).
+  - Farmer & Party Master (`parties` table) with auto-allocated immutable `SGT-FM-*` and `SGT-PT-*` IDs, KYC masking (`XXXX-XXXX-8765`), RBAC-protected unmasking with audit logging, digital signature storage, and Duplicate Detection Warning Engine (`AT-01` across phone, bank account, ID proof, and name+village).
+  - Central Double-Entry Khata Posting Engine (`accounts`, `journal_entries`, `journal_lines`) enforcing `SUM(Dr) === SUM(Cr) > 0`, source-document idempotency (`AT-13`), controlled journal reversal (`AT-14`), explicit separation of Accounting Debit/Credit totals from physical Cash In/Out and Bank In/Out (`AT-16`), and distinct Farmer Sub-Ledger buckets (`LOAN_PRINCIPAL`, `LOAN_INTEREST`, `CROP_PROCEEDS`, `DEDUCTIONS`, `INVOICE_RECEIVABLE`).
+- **Chunk 3 (Cash Book, Multi-Bank Treasury, Cheques, Bank Reconciliation & Farmer Loan Engine)**: **COMPLETED & VERIFIED** (`tests/chunk2_3_4.test.ts` — `AT-02`, `AT-03`, `AT-10`, `DR-11`, `AT-17` passing).
+  - Multi-Bank Accounts (`bank_accounts`), Internal Cash/Bank & Bank-to-Bank Contra Transfers (`AT-10` — zero false income/expense creation).
+  - Cheque Lifecycle Register (`cheques`: `PENDING` excluded from cleared bank balance per `DR-11`; `CLEARED` posts Khata entry; `BOUNCED` reverses Khata entry with audit reason).
+  - Bank Statement Import & Auto-Reconciliation (`bank_statement_lines`, `AT-17` — matches statement rows to book lines without deleting unmatched book entries).
+  - Farmer Loan Disbursement (`loans`, `loan_transactions`) via Cash (`AT-02`) and Bank Transfer/UPI (`AT-03`) + Repayment Allocation (`PRINCIPAL_FIRST` default per `DR-01`, `INTEREST_FIRST`, or `MANUAL`).
+- **Chunk 4 (Commodity Trading, Goods In / Goods Out & Stock Valuation Engine Integrated with Central Khata Book)**: **COMPLETED & VERIFIED** (`tests/chunk2_3_4.test.ts` — `AT-05`, `AT-06`, `AT-07` passing).
+  - One-click optional seeding of the 11 SRS Section 6.1 standard agricultural crops with 0 stock/rates, plus auto-code generation and Trading Staff access for the Add Commodity button.
+  - Owned Commodity Purchases (`GOODS_IN` + `SGT_OWNED`, `AT-05`) atomically update commodity bags & weight, weighted-average stock valuation, and post double-entry Khata lines (`1301` Inventory Dr / Party or Cash/Bank Cr).
+  - Owned Commodity Sales (`GOODS_OUT` + `SGT_OWNED`, `AT-06`) enforce insufficient-stock protection and atomically update stock and Buyer Receivable / Cash / Bank in the Central Khata Book.
+  - Dalali / Farmer Agency Lots (`FARMER_AGENCY`, `AT-07`) track agency bags and weight separately without polluting SGT-owned inventory valuation.
+- **Chunk 5 (Farmer Patti Settlement Engine `AT-08` & Buyer-Side Kharidi Patti)**: **COMPLETED & VERIFIED** (`tests/chunk5.test.ts` — 4/4 tests passing, 15/15 total across Chunks 1–5).
+  - Farmer Patti Settlement Engine (`farmer_pattis`, `farmer_patti_items`, `SGT-FP-*`) calculating gross crop value across multiple lots, deducting commission/hamali/weighment/mandi fees, automatically detecting and recovering active Farmer Loan Principal & Accrued Interest (`DR-01` Principal-First), and carrying forward any remaining loan balance when deductions + loan due exceed gross crop value (`AT-08`).
+  - Buyer-Side Kharidi Patti Engine (`kharidi_pattis`, `kharidi_patti_items`, `SGT-KP-*`) supporting both `SGT_OWNED` and `FARMER_AGENCY` Dalali sales with non-automatic GST (`DR-04`) and atomic stock + Khata posting.
+- **Chunk 6 (Dalali Vikri Patti `SGT-DV`, Dalali Kharidi Patti `SGT-DK`, Cash/Credit Bill `SGT-CB`, Transport Details, Amount in Words & Controlled Credit Note Reversal `AT-07`, `AT-11`, `AT-14`, `DR-06`, `DR-07`)**: **COMPLETED & VERIFIED** (`tests/chunk6.test.ts` — 3/3 tests passing, 18/18 total across Chunks 1–6).
+  - Dalali Vikri Patti Engine (`dalali_vikri_pattis`, `dalali_vikri_items`, `SGT-DV-*`) with `andiges`, `niitu`, `tukad`, `rmc`, `commission`, and `hamali` deductions (`DR-06`), `FARMER_AGENCY` stock isolation (`AT-07`), Indian numbering amount in words, and balanced Khata posting.
+  - Dalali Kharidi Patti Engine (`dalali_kharidi_pattis`, `dalali_kharidi_items`, `SGT-DK-*`) with explicit per-line non-automatic GST (`AT-11`), `FARMER_AGENCY` stock isolation (`AT-07`), and balanced Khata posting.
+- **Chunk 7 (Buyer Collection Book `AT-09`, Operational Expenses, Owner Capital/Drawings, Govt Fees, Chit Funds, Insurance Commitments `DR-12`, Sales/Purchase & GST Registers `AT-11`)**: **COMPLETED & VERIFIED** (`tests/chunk7_8_9.test.ts`).
+  - Buyer Collection Book (`buyer_collections`, `SGT-RC-*`) supporting partial/full receipt allocation against `CASH_CREDIT_BILL`, `KHARIDI_PATTI`, `DALALI_KHARIDI`, and `GOODS_OUT_SALE`, discount allowed (`5105`), write-off (`5106`), automatic invoice status transitions (`UNPAID` → `PARTIALLY_PAID` → `PAID`), and overdue aging buckets (`0–7`, `8–15`, `16–30`, `30+` days).
+  - Operational Expenses, Owner Capital/Drawings, Govt/APMC Fees, Chit Fund Contributions/Maturities, Insurance Policies, and Upcoming Commitments (`expense_commitments`, `SGT-EX-*`), with RBAC privacy protection for `isRestrictedPersonal` Owner Drawings (`DR-12`).
+- **Chunk 8 (Daily Operations, Day-End Report, Day Close Lock & Reopen `AT-15`, Error/Validation Dashboard `AT-13`, and Pluggable SMS Outbox `AT-12`)**: **COMPLETED & VERIFIED** (`tests/chunk7_8_9.test.ts`).
+  - Day Close & Reopen Engine (`day_closes`) computing physical Cash/Bank vs Accounting Dr/Cr snapshots (`AT-16`), enforcing posting locks on closed dates across all posting services (`AT-15`), and allowing authorized `REOPEN_CLOSED_DAY` with mandatory audit reason.
+  - Automatic Validation & Error Dashboard (`getValidationIssues`, `AT-13`) detecting unbalanced journals, negative stock, overdue receivables, due commitments, and failed SMS alerts.
+  - Pluggable SMS Notification Outbox (`sms_outbox`, `SGT-SMS-*`, `AT-12`) with retry safety that never duplicates accounting ledger entries.
+- **Chunk 9 (All 12 Printable/Exportable Reports, Trial Balance, P&L, Balance Sheet, Encrypted/Checksummed Backup & Restore Verification `AT-18`, and Documentation)**: **COMPLETED & VERIFIED** (`tests/chunk7_8_9.test.ts`).
+  - Comprehensive Financial Reporting Engine (`getComprehensiveFinancialReport`) covering Trial Balance, Profit & Loss, Balance Sheet, GST Output/Input Summary, Sales/Purchase/Dalali Registers, and overdue aging.
+  - Backup Snapshot & Integrity Verification Engine (`backup_snapshots`, `SGT-BK-*`, `AT-18`) computing SHA-256 checksums across all core tables and verifying zero-imbalance Trial Balance invariants.
+
+## 2. Decisions Register (Configurable Safe Defaults Shipped)
+- **DR-01 (Interest & Loan Recovery Policy)**: Shipped configurable `SIMPLE` interest with `PRINCIPAL_FIRST` recovery (`ACT_365` day count) and `0 bps` initial rate (`ownerConfirmed: false`) until Owner/Accountant confirms.
+- **DR-02 (Commission & Hamali Rates)**: Shipped configurable `0 bps` / `₹0/bag` defaults (`ownerConfirmed: false`).
+- **DR-03 / DR-06 / DR-07 (Custom Mandi Fee & Tax Labels)**: Shipped bilingual configurable labels and fields for *Niitu*, *Tukad*, *RMC*, *Andiges*, and *CST/Other Tax*.
+- **DR-04 (Stock Valuation & Non-Automatic GST)**: Shipped `WEIGHTED_AVERAGE` on SGT-owned stock (`SGT_OWNED`), strictly isolating `FARMER_AGENCY` Dalali lots, and enforcing non-automatic GST (`gstApplicable` opt-in per line).
+- **DR-11 (Cheque Clearance Accounting)**: `PENDING` cheques are tracked in the Cheque Register without altering cleared bank balances until marked `CLEARED`; `BOUNCED` cheques automatically generate a reversing Khata entry.
+- **DR-12 (Personal/Family Drawing Privacy)**: `isRestrictedPersonal` entries are masked (`[Restricted Owner Personal Entry]`) for non-Owner/non-Accountant roles.
