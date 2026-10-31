@@ -321,6 +321,10 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
     };
   });
 
+  const isAllZeroStock =
+    chartData.length > 0 &&
+    chartData.every((d) => (d.ownedValue || 0) === 0 && (d.agencyValue || 0) === 0);
+
   const handleSubmitMovement = async (e: React.FormEvent) => {
     e.preventDefault();
     setFeedback(null);
@@ -732,8 +736,6 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
       <div className="glass-panel rounded-3xl p-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span>SRS Sections 6.1, 6.3 & 6.4</span>
-            <span aria-hidden="true">·</span>
             <span>Separate Bags & Weight Accounting</span>
             <span aria-hidden="true">·</span>
             <span>Owned vs Dalali Agency Isolation</span>
@@ -1583,7 +1585,19 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
             </div>
           </div>
         ) : (
-          <div className="h-80 w-full">
+          <div className="relative h-80 w-full">
+            {isAllZeroStock && (
+              <div className="absolute inset-x-0 top-1/3 z-10 flex flex-col items-center justify-center pointer-events-none">
+                <div className="bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl border border-slate-200/80 shadow-xs text-center">
+                  <div className="text-xs font-semibold text-slate-700">
+                    Zero Stock Recorded Across All Commodities
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Stock values will chart automatically upon Goods In or Inward Patti entries.
+                  </div>
+                </div>
+              </div>
+            )}
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={chartData}
@@ -1605,6 +1619,8 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
                 <YAxis
                   axisLine={false}
                   tickLine={false}
+                  domain={isAllZeroStock ? [0, 1] : ['auto', 'auto']}
+                  ticks={isAllZeroStock ? [0, 0.5, 1] : undefined}
                   tick={{
                     fill: '#64748B',
                     fontSize: 11,
@@ -2293,7 +2309,7 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
                   : 'Recent Goods In / Goods Out & Stock Adjustments Register'}
               </h2>
               <p className="text-xs text-slate-500">
-                SRS Section 6.3 Formula: Closing Stock = Opening Stock + Goods In − Goods Out ±
+                Formula: Closing Stock = Opening Stock + Goods In − Goods Out ±
                 Approved Adjustments
               </p>
             </div>

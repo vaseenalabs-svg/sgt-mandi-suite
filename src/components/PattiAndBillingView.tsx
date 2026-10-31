@@ -1055,9 +1055,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
       <div className="glass-panel rounded-3xl p-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2 text-xs text-slate-500">
-            <span>SRS Sections 7, 8 & 9</span>
-            <span aria-hidden="true">·</span>
-            <span>AT-07 Agency Isolation · AT-08 Loan Recovery · AT-11 Non-Auto GST · AT-14 Credit Notes</span>
+            <span>Agency Isolation · Loan Recovery · Statutory Invoicing</span>
           </div>
           <h1 className="text-2xl font-bold text-slate-900">
             {lang === 'kn'
@@ -1206,7 +1204,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
             <div className="flex items-center justify-between border-b border-slate-200/70 pb-4">
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  Create Farmer Settlement Patti (ರೈತ ಪಟ್ಟಿ · SRS 7.1)
+                  Create Farmer Settlement Patti (ರೈತ ಪಟ್ಟಿ)
                 </h2>
                 <p className="text-xs text-slate-500">
                   Calculates gross crop proceeds, deducts mandi charges, recovers active loan
@@ -1238,7 +1236,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
 
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">
-                  Patti Date
+                  Patti Date {fpDate && <span className="text-[11px] font-mono text-blue-600 font-normal">({formatDateDDMMYYYY(fpDate)})</span>}
                 </label>
                 <input
                   type="date"
@@ -1834,7 +1832,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
             <div className="flex items-center justify-between border-b border-slate-200/70 pb-4">
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  Create Buyer-Side Kharidi Patti (ಖರೀದಿ ಪಟ್ಟಿ · SRS 7.2)
+                  Create Buyer-Side Kharidi Patti (ಖರೀದಿ ಪಟ್ಟಿ)
                 </h2>
                 <p className="text-xs text-slate-500">
                   Generates Buyer Sales / Dalali Kharidi Patti (`SGT-KP-*`) with non-automatic GST
@@ -2209,11 +2207,11 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
               <div>
                 <h2 className="text-base font-bold text-slate-900">
                   {dalaliSubMode === 'VIKRI'
-                    ? 'Dalali Vikri Patti — Farmer Commission Sale (ದಲಾಲಿ ವಿಕ್ರಿ ಪಟ್ಟಿ · SRS 8.1)'
-                    : 'Dalali Kharidi Patti — Buyer Commission Bill (ದಲಾಲಿ ಖರೀದಿ ಪಟ್ಟಿ · SRS 8.2)'}
+                    ? 'Dalali Vikri Patti — Farmer Commission Sale (ದಲಾಲಿ ವಿಕ್ರಿ ಪಟ್ಟಿ)'
+                    : 'Dalali Kharidi Patti — Buyer Commission Bill (ದಲಾಲಿ ಖರೀದಿ ಪಟ್ಟಿ)'}
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Strictly isolated `FARMER_AGENCY` Dalali goods (`AT-07`) with configurable{' '}
+                  Strictly isolated `FARMER_AGENCY` Dalali goods with configurable{' '}
                   {settings.customLabels.niituFeeLabelEn},{' '}
                   {settings.customLabels.tukadFeeLabelEn},{' '}
                   {settings.customLabels.rmcFeeLabelEn}, and{' '}
@@ -2288,7 +2286,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
 
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">
-                  Patti Date
+                  Patti Date {dvDate && <span className="text-[11px] font-mono text-blue-600 font-normal">({formatDateDDMMYYYY(dvDate)})</span>}
                 </label>
                 <input
                   type="date"
@@ -2657,7 +2655,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
             <div className="flex items-center justify-between border-b border-slate-200/70 pb-4">
               <div>
                 <h2 className="text-base font-bold text-slate-900">
-                  Create Cash / Credit Bill with Transport Details (ನಗದು / ಉದರಿ ಬಿಲ್ · SRS 9.2)
+                  Create Cash / Credit Bill with Transport Details (ನಗದು / ಉದರಿ ಬಿಲ್)
                 </h2>
                 <p className="text-xs text-slate-500">
                   Full commercial/tax invoice (`SGT-CB-*`) with lorry/driver dispatch fields,

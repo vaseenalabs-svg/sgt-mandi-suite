@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   AlertTriangle,
-  BookOpen,
   CheckCircle2,
   Edit2,
   Eye,
@@ -133,23 +132,26 @@ export const PartiesAndFarmersView: React.FC<PartiesAndFarmersViewProps> = ({
   const [ledgerLoading, setLedgerLoading] = useState(false);
 
   const canUnmaskKyc =
-    activeUser.canViewSensitiveKyc &&
-    activeUser.permissions.includes(PermissionKey.VIEW_SENSITIVE_KYC);
+    Boolean(activeUser?.canViewSensitiveKyc) &&
+    Boolean(activeUser?.permissions?.includes(PermissionKey.VIEW_SENSITIVE_KYC));
 
-  const filteredParties = parties.filter((p) => {
+  const safeParties = Array.isArray(parties) ? parties : [];
+
+  const filteredParties = safeParties.filter((p) => {
+    if (!p) return false;
     const matchesType = filterType === 'ALL' || p.partyType === filterType;
     const term = searchTerm.trim().toLowerCase();
     const matchesSearch =
       !term ||
-      p.partyCode.toLowerCase().includes(term) ||
-      p.name.toLowerCase().includes(term) ||
-      p.village.toLowerCase().includes(term) ||
-      p.phonePrimary.toLowerCase().includes(term);
+      (p.partyCode || '').toLowerCase().includes(term) ||
+      (p.name || '').toLowerCase().includes(term) ||
+      (p.village || '').toLowerCase().includes(term) ||
+      (p.phonePrimary || '').toLowerCase().includes(term);
     return matchesType && matchesSearch;
   });
 
-  const farmerCount = parties.filter((p) => p.partyType === 'FARMER').length;
-  const otherPartyCount = parties.length - farmerCount;
+  const farmerCount = safeParties.filter((p) => p && p.partyType === 'FARMER').length;
+  const otherPartyCount = safeParties.length - farmerCount;
 
   const resetForm = () => {
     setPartyType('FARMER');
@@ -563,7 +565,18 @@ export const PartiesAndFarmersView: React.FC<PartiesAndFarmersViewProps> = ({
                           className="btn-glass px-2 py-1 text-xs font-semibold text-blue-700 flex items-center gap-1"
                           title="View Khata Book Sub-Ledger"
                         >
-                          <BookOpen className="w-3.5 h-3.5" />
+                          <svg
+                            className="w-3.5 h-3.5"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M12 7v14" />
+                            <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+                          </svg>
                           <span>Khata</span>
                         </button>
                         <button

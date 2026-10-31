@@ -59,6 +59,7 @@ import { PattiAndBillingView } from './components/PattiAndBillingView';
 import { OperationsReportsAndDayCloseView } from './components/OperationsReportsAndDayCloseView';
 import { FloatingCalculator } from './components/FloatingCalculator';
 import { LoginPage } from './components/LoginPage';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogOut, KeyRound, CheckCircle2, AlertCircle } from 'lucide-react';
 
 type ActiveSection =
@@ -861,7 +862,7 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col text-slate-900">
       {/* Top Bar */}
-      <header className="sticky top-0 z-30 glass-panel border-b border-slate-200/80 px-6 py-3.5 flex items-center justify-between gap-6 no-print">
+      <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-6 py-3.5 flex items-center justify-between gap-6 shadow-xs no-print">
         <a
           href="#top"
           onClick={(e) => {
@@ -1019,17 +1020,17 @@ export default function App() {
       </header>
 
       {/* Secondary Workspace Toolbar */}
-      <div className="max-w-7xl w-full mx-auto px-6 pt-5 pb-2 flex flex-wrap items-center justify-between gap-4 no-print">
+      <div className="max-w-7xl w-full mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/60 no-print">
         <div className="flex items-center gap-3 text-xs text-slate-600">
-          <span className="font-medium text-slate-900">{t(lang, 'brandTagline')}</span>
-          <span aria-hidden="true">·</span>
+          <span className="font-semibold text-slate-800">{t(lang, 'brandTagline')}</span>
+          <span aria-hidden="true" className="text-slate-300">·</span>
           <span>
             {t(lang, 'businessDate')}:{' '}
-            <strong className="font-mono">{formatDateDDMMYYYY(businessDate)}</strong>
+            <strong className="font-mono text-slate-900">{formatDateDDMMYYYY(businessDate)}</strong>
           </span>
           {activeUser && (
             <>
-              <span aria-hidden="true">·</span>
+              <span aria-hidden="true" className="text-slate-300">·</span>
               <span>
                 {t(lang, 'activeRole')}:{' '}
                 <strong className="text-blue-600">{activeUser.fullName}</strong>
@@ -1038,13 +1039,13 @@ export default function App() {
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           {users.length > 0 && (
             <select
               aria-label="Switch Active User Role"
               value={activeUserId}
               onChange={(e) => handleSelectActiveUser(e.target.value)}
-              className="apple-input py-1.5 px-3 text-xs font-medium"
+              className="apple-input py-1 px-2.5 text-xs font-medium h-7"
             >
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
@@ -1054,11 +1055,11 @@ export default function App() {
             </select>
           )}
 
-          <div className="flex items-center gap-1 p-1 bg-slate-200/70 rounded-xl">
+          <div className="flex items-center gap-0.5 p-0.5 bg-slate-200/70 rounded-lg h-7">
             <button
               type="button"
               onClick={() => setLang('en')}
-              className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all whitespace-nowrap shrink-0 ${
+              className={`px-2.5 py-0.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap shrink-0 ${
                 lang === 'en'
                   ? 'bg-white text-slate-900 shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -1069,7 +1070,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setLang('kn')}
-              className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all whitespace-nowrap shrink-0 ${
+              className={`px-2.5 py-0.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap shrink-0 ${
                 lang === 'kn'
                   ? 'bg-white text-slate-900 shadow-2xs'
                   : 'text-slate-600 hover:text-slate-900'
@@ -1104,7 +1105,7 @@ export default function App() {
             </button>
           </div>
         ) : settings && activeUser ? (
-          <>
+          <ErrorBoundary sectionName={activeSection}>
             {activeSection === 'stock' && (
               <StockStatusView
                 stockStatuses={stockStatuses}
@@ -1263,7 +1264,7 @@ export default function App() {
                 onFilterLogs={handleFilterAuditLogs}
               />
             )}
-          </>
+          </ErrorBoundary>
         ) : null}
       </main>
 
