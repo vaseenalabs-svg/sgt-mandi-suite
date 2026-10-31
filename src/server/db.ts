@@ -99,17 +99,31 @@ export function getBootstrapSystemActor(): UserProfile {
 }
 
 export function createDatabase(dbFilePath?: string): Database.Database {
-  const resolvedPath =
+  let resolvedPath =
     dbFilePath ?? process.env.SGT_DB_PATH ?? path.resolve(process.cwd(), 'sgt_database.sqlite');
 
   if (resolvedPath !== ':memory:') {
-    const dir = path.dirname(resolvedPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    try {
+      const dir = path.dirname(resolvedPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    } catch (fsErr) {
+      // If root/mount path (/var/data) has permission restrictions without an attached volume,
+      // fallback safely to local working directory to keep application online
+      console.warn(`Warning: Could not create directory for ${resolvedPath} (${fsErr}). Falling back to local database.`);
+      resolvedPath = path.resolve(process.cwd(), 'sgt_database.sqlite');
     }
   }
 
-  const db = new Database(resolvedPath);
+  let db: Database.Database;
+  try {
+    db = new Database(resolvedPath);
+  } catch (dbErr) {
+    console.warn(`Warning: Could not open database at ${resolvedPath} (${dbErr}). Falling back to local database.`);
+    resolvedPath = path.resolve(process.cwd(), 'sgt_database.sqlite');
+    db = new Database(resolvedPath);
+  }
 
   if (resolvedPath !== ':memory:') {
     db.pragma('journal_mode = WAL');
