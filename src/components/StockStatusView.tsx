@@ -12,6 +12,7 @@ import {
   Package,
   Plus,
   Printer,
+  RefreshCw,
   Scale,
   Search,
   Settings2,
@@ -27,8 +28,13 @@ import {
   YAxis,
 } from 'recharts';
 import {
+  CashCreditBillRecord,
   CommodityRecord,
   CommodityStockStatus,
+  DalaliKharidiPattiRecord,
+  DalaliVikriPattiRecord,
+  FarmerPattiRecord,
+  KharidiPattiRecord,
   PartyRecord,
   PermissionKey,
   StockMovementDirection,
@@ -45,6 +51,13 @@ import {
   rupeesToPaise,
 } from '../shared/math';
 import { LanguageCode, t } from '../shared/i18n';
+import {
+  CommodityMasterSubsection,
+  CommoditySummarySubsection,
+  SalesBookSubsection,
+  StockAuditModal,
+  StockMenuTab,
+} from './StockSubsectionsView';
 
 function getTodayIST(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -59,8 +72,15 @@ interface StockStatusViewProps {
   stockStatuses: CommodityStockStatus[];
   stockMovements: StockMovementRecord[];
   parties?: PartyRecord[];
+  farmerPattis?: FarmerPattiRecord[];
+  kharidiPattis?: KharidiPattiRecord[];
+  dalaliVikriPattis?: DalaliVikriPattiRecord[];
+  dalaliKharidiPattis?: DalaliKharidiPattiRecord[];
+  cashCreditBills?: CashCreditBillRecord[];
+  businessDate?: string;
   activeUser: UserProfile;
   lang: LanguageCode;
+  onRefresh?: () => Promise<void>;
   onRecordMovement: (payload: {
     commodityId: string;
     transactionDate: string;
@@ -85,6 +105,13 @@ interface StockStatusViewProps {
     referenceBagWeightKg: number | null;
     lowStockThresholdQuintals: number;
     standardRatePerQuintalPaise: number;
+    gstApplicableDefault?: boolean;
+    cgstRateBps?: number;
+    sgstRateBps?: number;
+    openingQuantityQuintals?: number;
+    openingRatePerQuintalPaise?: number;
+    godownLocation?: string;
+    openingDate?: string;
   }) => Promise<void>;
   onUpdateCommodity: (
     commodityId: string,
@@ -103,6 +130,12 @@ interface StockStatusViewProps {
 }
 
 type StockFilterMode = 'ALL' | 'LOW_STOCK' | 'AGENCY_ACTIVE';
+type StockSourceFilter =
+  | 'ALL_SOURCES'
+  | 'DIRECT_PURCHASE'
+  | 'SUPPLIER_COMMISSION'
+  | 'FARMER_COMMISSION';
+type GodownStorageFilter = 'ALL' | 'MANDI' | 'MAIN_GODOWN';
 type DisplayWeightUnit = 'QUINTAL' | 'KG' | 'TONNE';
 type ChartMetricMode = 'WEIGHT' | 'BAGS' | 'VALUATION';
 
@@ -110,14 +143,29 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
   stockStatuses,
   stockMovements,
   parties = [],
+  farmerPattis = [],
+  kharidiPattis = [],
+  dalaliVikriPattis = [],
+  dalaliKharidiPattis = [],
+  cashCreditBills = [],
+  businessDate,
   activeUser,
   lang,
+  onRefresh,
   onRecordMovement,
   onSeedStandardCommodities,
   onCreateCommodity,
   onUpdateCommodity,
 }) => {
-  const todayStr = getTodayIST();
+  const todayStr = businessDate || getTodayIST();
+  const [activeSubTab, setActiveSubTab] = useState<StockMenuTab>('STOCK_STATUS');
+  const [sourceFilter, setSourceFilter] = useState<StockSourceFilter>('ALL_SOURCES');
+  const [storageFilter, setStorageFilter] = useState<GodownStorageFilter>('ALL');
+  const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [auditModalMode, setAuditModalMode] = useState<'NONE' | 'AUDIT_PRINT' | 'SALES_AUDIT'>(
+    'NONE'
+  );
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [filterMode, setFilterMode] = useState<StockFilterMode>('ALL');
@@ -258,6 +306,38 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
     return `${val.toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} t`;
   };
 
+  const getCommodityStorageLocation = (commodityId: string): 'MANDI' | 'MAIN_GODOWN' => {
+    const movs = stockMovements.filter((m) => m.commodityId === commodityId);
+    const hasMainGodown = movs.some((m) =>
+      (m.reason || '').toUpperCase().includes('MAIN GODOWN')
+    );
+    return hasMainGodown ? 'MAIN_GODOWN' : 'MANDI';
+  };
+
+  const getCommoditySourceCategory = (
+    item: CommodityStockStatus
+  ): 'DIRECT_PURCHASE' | 'SUPPLIER_COMMISSION' | 'FARMER_COMMISSION' => {
+    const movs = stockMovements.filter((m) => m.commodityId === item.commodity.id);
+    const hasSupplierCommission = movs.some(
+      (m) =>
+        m.ownershipType === 'FARMER_AGENCY' &&
+        (m.reason || '').toUpperCase().includes('SUPPLIER')
+    );
+    if (hasSupplierCommission) return 'SUPPLIER_COMMISSION';
+    if (item.agencyHandledWeightGrams > 0 && item.closingOwnedWeightGrams <= 0) {
+      return 'FARMER_COMMISSION';
+    }
+    return 'DIRECT_PURCHASE';
+  };
+
+  const distinctCategories = Array.from(
+    new Set(
+      stockStatuses
+        .map((s) => s.commodity.gradeVariety?.trim() || 'Standard')
+        .filter(Boolean)
+    )
+  );
+
   // Filtered commodity cards & chart data
   const filteredCommodities = stockStatuses.filter((item) => {
     const matchesSearch =
@@ -269,9 +349,38 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
       item.commodity.hsnCode.includes(searchQuery);
 
     if (!matchesSearch) return false;
-    if (filterMode === 'LOW_STOCK')
-      return isCommodityBelowThreshold(item) || item.isNegativeStockException;
-    if (filterMode === 'AGENCY_ACTIVE') return item.agencyHandledWeightGrams > 0;
+    if (filterMode === 'LOW_STOCK') {
+      if (!isCommodityBelowThreshold(item) && !item.isNegativeStockException) return false;
+    }
+    if (filterMode === 'AGENCY_ACTIVE' && item.agencyHandledWeightGrams <= 0) return false;
+
+    if (sourceFilter === 'DIRECT_PURCHASE') {
+      if (
+        item.closingOwnedWeightGrams <= 0 &&
+        getCommoditySourceCategory(item) !== 'DIRECT_PURCHASE'
+      ) {
+        return false;
+      }
+    } else if (sourceFilter === 'SUPPLIER_COMMISSION') {
+      if (getCommoditySourceCategory(item) !== 'SUPPLIER_COMMISSION') return false;
+    } else if (sourceFilter === 'FARMER_COMMISSION') {
+      if (
+        item.agencyHandledWeightGrams <= 0 &&
+        getCommoditySourceCategory(item) !== 'FARMER_COMMISSION'
+      ) {
+        return false;
+      }
+    }
+
+    if (storageFilter !== 'ALL') {
+      if (getCommodityStorageLocation(item.commodity.id) !== storageFilter) return false;
+    }
+
+    if (categoryFilter !== 'ALL') {
+      const itemCat = item.commodity.gradeVariety?.trim() || 'Standard';
+      if (itemCat !== categoryFilter) return false;
+    }
+
     return true;
   });
 
@@ -731,7 +840,102 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+      {/* Four Separate Subsections Navigation Bar under Stock Status Menu (Section B) */}
+      <div className="glass-panel rounded-2xl p-2 flex flex-wrap items-center justify-between gap-3 print:hidden">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(
+            [
+              { id: 'COMMODITY_MASTER' as StockMenuTab, label: 'Commodity Master' },
+              { id: 'STOCK_STATUS' as StockMenuTab, label: 'Stock Status' },
+              { id: 'COMMODITY_SUMMARY' as StockMenuTab, label: 'Commodity Summary' },
+              { id: 'SALES_BOOK' as StockMenuTab, label: 'Sales Book' },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveSubTab(tab.id)}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                activeSubTab === tab.id
+                  ? 'bg-orange-500 text-white shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Top-Right Live Stock Ledger Summary (TOTAL HOLDING & STOCK VALUE) */}
+        <div className="flex flex-wrap items-center gap-5 px-3 py-1">
+          <div className="text-right">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              TOTAL HOLDING
+            </div>
+            <div className="text-sm font-extrabold font-mono text-slate-900">
+              {(totalOwnedWeightGrams / 100_000).toLocaleString('en-IN', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}{' '}
+              <span className="text-orange-600">Q</span>
+            </div>
+          </div>
+          <div className="h-6 w-px bg-slate-200" />
+          <div className="text-right">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              STOCK VALUE
+            </div>
+            <div className="text-sm font-extrabold font-mono text-emerald-700">
+              {formatINR(totalOwnedValuationPaise, false)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Render B1: Commodity Master */}
+      {activeSubTab === 'COMMODITY_MASTER' && (
+        <CommodityMasterSubsection
+          lang={lang}
+          businessDate={todayStr}
+          activeUser={activeUser}
+          stockStatuses={stockStatuses}
+          stockMovements={stockMovements}
+          farmerPattis={farmerPattis}
+          kharidiPattis={kharidiPattis}
+          dalaliVikriPattis={dalaliVikriPattis}
+          dalaliKharidiPattis={dalaliKharidiPattis}
+          cashCreditBills={cashCreditBills}
+          onCreateCommodity={onCreateCommodity}
+          onUpdateCommodity={onUpdateCommodity}
+          onOpenEditCommodity={openEditCommodityDrawer}
+        />
+      )}
+
+      {/* Render B3: Commodity Summary */}
+      {activeSubTab === 'COMMODITY_SUMMARY' && (
+        <CommoditySummarySubsection
+          businessDate={todayStr}
+          stockStatuses={stockStatuses}
+          stockMovements={stockMovements}
+        />
+      )}
+
+      {/* Render B4: Sales Book */}
+      {activeSubTab === 'SALES_BOOK' && (
+        <SalesBookSubsection
+          businessDate={todayStr}
+          stockStatuses={stockStatuses}
+          stockMovements={stockMovements}
+          kharidiPattis={kharidiPattis}
+          dalaliKharidiPattis={dalaliKharidiPattis}
+          cashCreditBills={cashCreditBills}
+        />
+      )}
+
+      {/* Render B2: Stock Status Subsection */}
+      {activeSubTab === 'STOCK_STATUS' && (
+        <div className="space-y-8">
       {/* Section 1: Minimalist Glassmorphic Header & Primary Actions */}
       <div className="glass-panel rounded-3xl p-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div className="space-y-1">
@@ -745,6 +949,42 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 shrink-0 print:hidden">
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={async () => {
+                setIsRefreshing(true);
+                try {
+                  await onRefresh();
+                } finally {
+                  setIsRefreshing(false);
+                }
+              }}
+              className="px-3.5 py-2.5 rounded-xl bg-white/85 border border-slate-200/80 text-xs font-semibold text-slate-800 hover:bg-white transition-all inline-flex items-center gap-1.5 whitespace-nowrap"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-slate-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setAuditModalMode('AUDIT_PRINT')}
+            className="px-3.5 py-2.5 rounded-xl bg-white/85 border border-slate-200/80 text-xs font-semibold text-slate-800 hover:bg-white transition-all inline-flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <Printer className="w-3.5 h-3.5 text-slate-700" />
+            <span>Audit Print</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setAuditModalMode('SALES_AUDIT')}
+            className="px-3.5 py-2.5 rounded-xl bg-orange-500 text-white text-xs font-semibold hover:bg-orange-600 transition-all inline-flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span>Sales Audit</span>
+          </button>
+
           {stockStatuses.length === 0 && onSeedStandardCommodities && canManageSettings && (
             <button
               type="button"
@@ -1383,75 +1623,145 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
         </form>
       )}
 
-      {/* Section 3: Filter & Unit Controls Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Interactive Segmented Filter */}
-          <div className="flex items-center gap-1 p-1 bg-slate-200/70 rounded-xl">
-            <button
-              type="button"
-              onClick={() => setFilterMode('ALL')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap shrink-0 ${
-                filterMode === 'ALL'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              All Commodities ({stockStatuses.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilterMode('LOW_STOCK')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap shrink-0 ${
-                filterMode === 'LOW_STOCK'
-                  ? 'bg-white text-amber-800 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Low Stock Alerts ({lowStockCount})
-            </button>
-            <button
-              type="button"
-              onClick={() => setFilterMode('AGENCY_ACTIVE')}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap shrink-0 ${
-                filterMode === 'AGENCY_ACTIVE'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Dalali / Agency Lots
-            </button>
-          </div>
-
-          {/* Interactive Weight Unit Switcher */}
-          <div className="flex items-center gap-1 p-1 bg-slate-200/70 rounded-xl">
-            {(['QUINTAL', 'KG', 'TONNE'] as DisplayWeightUnit[]).map((u) => (
+      {/* Section 3: Filter & Unit Controls Bar (Source, Storage/Godown, Category, Search) */}
+      <div className="space-y-3">
+        {/* Source Filters & Storage/Godown Filters (Section B2) */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-200/70 rounded-xl">
+            {(
+              [
+                { id: 'ALL_SOURCES' as StockSourceFilter, label: 'All Sources' },
+                { id: 'DIRECT_PURCHASE' as StockSourceFilter, label: 'Direct Purchase' },
+                { id: 'SUPPLIER_COMMISSION' as StockSourceFilter, label: 'Supplier Commission' },
+                { id: 'FARMER_COMMISSION' as StockSourceFilter, label: 'Farmer Commission' },
+              ] as const
+            ).map((src) => (
               <button
-                key={u}
+                key={src.id}
                 type="button"
-                onClick={() => setDisplayUnit(u)}
-                className={`px-2.5 py-1.5 text-xs font-semibold font-mono rounded-lg transition-all whitespace-nowrap shrink-0 ${
-                  displayUnit === u
-                    ? 'bg-white text-blue-600 shadow-2xs'
+                onClick={() => setSourceFilter(src.id)}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${
+                  sourceFilter === src.id
+                    ? 'bg-orange-500 text-white shadow-2xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                {u === 'QUINTAL' ? 'Quintals (Q)' : u === 'KG' ? 'Kilograms (kg)' : 'Tonnes (t)'}
+                {src.label}
               </button>
             ))}
           </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Category Filter */}
+            <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="apple-input py-1.5 px-3 text-xs font-semibold"
+              aria-label="Filter by Commodity Category"
+            >
+              <option value="ALL">All Categories</option>
+              {distinctCategories.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+
+            {/* Storage / Godown Filter */}
+            <div className="flex items-center gap-1 p-1 bg-slate-200/70 rounded-xl">
+              {(
+                [
+                  { id: 'ALL' as GodownStorageFilter, label: 'STORAGE: ALL' },
+                  { id: 'MANDI' as GodownStorageFilter, label: 'MANDI' },
+                  { id: 'MAIN_GODOWN' as GodownStorageFilter, label: 'MAIN GODOWN' },
+                ] as const
+              ).map((st) => (
+                <button
+                  key={st.id}
+                  type="button"
+                  onClick={() => setStorageFilter(st.id)}
+                  className={`px-2.5 py-1.5 text-[11px] font-bold rounded-lg transition-all whitespace-nowrap ${
+                    storageFilter === st.id
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {st.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
-        {/* Search Input */}
-        <div className="relative w-full md:w-72">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search crop name, code, HSN..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="apple-input w-full pl-9 py-2 text-xs"
-          />
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Interactive Segmented Filter */}
+            <div className="flex items-center gap-1 p-1 bg-slate-200/70 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setFilterMode('ALL')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap shrink-0 ${
+                  filterMode === 'ALL'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All Commodities ({stockStatuses.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterMode('LOW_STOCK')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap shrink-0 ${
+                  filterMode === 'LOW_STOCK'
+                    ? 'bg-white text-amber-800 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Low Stock Alerts ({lowStockCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterMode('AGENCY_ACTIVE')}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap shrink-0 ${
+                  filterMode === 'AGENCY_ACTIVE'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Dalali / Agency Lots
+              </button>
+            </div>
+
+            {/* Interactive Weight Unit Switcher */}
+            <div className="flex items-center gap-1 p-1 bg-slate-200/70 rounded-xl">
+              {(['QUINTAL', 'KG', 'TONNE'] as DisplayWeightUnit[]).map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  onClick={() => setDisplayUnit(u)}
+                  className={`px-2.5 py-1.5 text-xs font-semibold font-mono rounded-lg transition-all whitespace-nowrap shrink-0 ${
+                    displayUnit === u
+                      ? 'bg-white text-blue-600 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {u === 'QUINTAL' ? 'Quintals (Q)' : u === 'KG' ? 'Kilograms (kg)' : 'Tonnes (t)'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Search Input */}
+          <div className="relative w-full md:w-72">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Search crop name, code, HSN..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="apple-input w-full pl-9 py-2 text-xs"
+            />
+          </div>
         </div>
       </div>
 
@@ -1849,6 +2159,39 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
                     </h2>
                     <span className="text-xs text-slate-500">
                       {lang === 'kn' ? item.commodity.nameEn : item.commodity.nameKn}
+                    </span>
+                  </div>
+
+                  {/* Source / Ownership, Storage Location & Status/Percentage Badges (Section B2) */}
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
+                          getCommoditySourceCategory(item) === 'DIRECT_PURCHASE'
+                            ? 'bg-orange-50 text-orange-700 border border-orange-200/70'
+                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200/70'
+                        }`}
+                      >
+                        {getCommoditySourceCategory(item).replace('_', ' ')}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-bold font-mono uppercase">
+                        {getCommodityStorageLocation(item.commodity.id).replace('_', ' ')}
+                      </span>
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold font-mono ${
+                        item.closingOwnedWeightQuintals <= 0
+                          ? 'text-rose-600'
+                          : belowThreshold
+                          ? 'text-amber-600'
+                          : 'text-emerald-600'
+                      }`}
+                    >
+                      {item.closingOwnedWeightQuintals <= 0
+                        ? '0% · CRITICAL'
+                        : belowThreshold
+                        ? `${thresholdFillPct}% · LIMITED`
+                        : `${thresholdFillPct}% · OPTIMAL`}
                     </span>
                   </div>
                 </div>
@@ -2444,6 +2787,112 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
           )}
         </div>
       </div>
+        </div>
+      )}
+
+      {/* Global Edit Commodity Drawer when opened from Commodity Master */}
+      {activeSubTab !== 'STOCK_STATUS' &&
+        activeDrawer === 'EDIT_COMMODITY' &&
+        editingCommodity && (
+          <form
+            onSubmit={handleSubmitEditCommodity}
+            className="glass-panel rounded-3xl p-6 space-y-5 border border-blue-200/80"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200/70 pb-3.5">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900">
+                  Configure Commodity Master: {editingCommodity.nameEn} ({editingCommodity.code})
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveDrawer('NONE');
+                  setEditingCommodity(null);
+                }}
+                className="text-xs text-slate-500 hover:text-slate-900"
+              >
+                Close
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Commodity Name (English)
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editNameEn}
+                  onChange={(e) => setEditNameEn(e.target.value)}
+                  className="apple-input w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Commodity Name (ಕನ್ನಡ)
+                </label>
+                <input
+                  type="text"
+                  value={editNameKn}
+                  onChange={(e) => setEditNameKn(e.target.value)}
+                  className="apple-input w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">
+                  Grade / Variety
+                </label>
+                <input
+                  type="text"
+                  value={editGrade}
+                  onChange={(e) => setEditGrade(e.target.value)}
+                  className="apple-input w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">HSN Code</label>
+                <input
+                  type="text"
+                  value={editHsn}
+                  onChange={(e) => setEditHsn(e.target.value)}
+                  className="apple-input w-full font-mono"
+                />
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2">
+              <input
+                type="text"
+                required
+                placeholder="Audit reason for commodity update (required)"
+                value={editReason}
+                onChange={(e) => setEditReason(e.target.value)}
+                className="apple-input flex-1"
+              />
+              <button
+                type="submit"
+                className="px-6 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 transition-colors whitespace-nowrap"
+              >
+                Update Commodity Master
+              </button>
+            </div>
+          </form>
+        )}
+
+      {/* B2 Audit Print & Sales Audit Modal */}
+      {auditModalMode !== 'NONE' && (
+        <StockAuditModal
+          mode={auditModalMode}
+          onClose={() => setAuditModalMode('NONE')}
+          stockStatuses={stockStatuses}
+          stockMovements={stockMovements}
+          farmerPattis={farmerPattis}
+          kharidiPattis={kharidiPattis}
+          dalaliVikriPattis={dalaliVikriPattis}
+          dalaliKharidiPattis={dalaliKharidiPattis}
+          cashCreditBills={cashCreditBills}
+        />
+      )}
     </div>
   );
 };

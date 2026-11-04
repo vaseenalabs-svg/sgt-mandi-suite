@@ -27,6 +27,7 @@ import {
   DayCountConvention,
   DocumentSeriesType,
   DuplicateWarningItem,
+  FarmerDirectSettlementReceipt,
   FarmerPattiLineInput,
   FarmerPattiLineRecord,
   FarmerPattiRecord,
@@ -987,6 +988,13 @@ export class CorePlatformService {
         lowStockThresholdGrams: Number(cRow.low_stock_threshold_grams),
         lowStockThresholdQuintals: Number(cRow.low_stock_threshold_grams) / 100_000,
         standardRatePerQuintalPaise: Number(cRow.standard_rate_per_quintal_paise),
+        stockTrackingMode: (cRow.stock_tracking_mode as StockTrackingMode) || 'BOTH',
+        gstApplicableDefault: Boolean(cRow.gst_applicable_default),
+        cgstRateBps: Number(cRow.cgst_rate_bps ?? 0),
+        sgstRateBps: Number(cRow.sgst_rate_bps ?? 0),
+        igstRateBps: Number(cRow.igst_rate_bps ?? 0),
+        commissionRateBps: Number(cRow.commission_rate_bps ?? 0),
+        hamaliPerBagPaise: Number(cRow.hamali_per_bag_paise ?? 0),
         status: (cRow.status as 'ACTIVE' | 'INACTIVE') || 'ACTIVE',
         createdAt: String(cRow.created_at),
       };
@@ -4919,6 +4927,237 @@ export class CorePlatformService {
         grossAmountPaise: Number(ir.gross_amount_paise),
       })),
     };
+  }
+
+  /**
+   * Direct Settlement of Finalized Farmer Pattis (Section E).
+   * - Requires one or more finalized Farmer Pattis with unpaid `balancePayablePaise > 0`
+   * - Prevents premature settlement before pattis/deductions are finalized
+   * - Prevents duplicate settlement and duplicate deductions via idempotency and balance checks
+   * - Updates Farmer Ledger (Account 2001), Cash/Bank Account (1001/1002), and patti balances
+   * - Generates a structured FarmerDirectSettlementReceipt
+   */
+  public settleFarmerPattisDirect(params: {
+    farmerId: string;
+    pattiIds: string[];
+    settlementDate?: string;
+    settlementAmountPaise?: number;
+    paymentMode: 'CASH' | 'BANK';
+    bankAccountId?: string | null;
+    idempotencyKey?: string;
+    notes?: string;
+    actor: UserProfile;
+  }): {
+    receipt: FarmerDirectSettlementReceipt;
+    updatedPattis: FarmerPattiRecord[];
+  } {
+    this.requirePermission(params.actor, PermissionKey.CREATE_TRADING_BILLS);
+
+    if (!params.farmerId) {
+      throw new Error('Farmer selection is required for Direct Settlement.');
+    }
+    if (!Array.isArray(params.pattiIds) || params.pattiIds.length === 0) {
+      throw new Error(
+        'Cannot perform premature settlement: select at least one finalized Farmer Patti with deductions.'
+      );
+    }
+
+    const settlementDate = params.settlementDate || getTodayIST();
+
+    const uniquePattiIds = Array.from(new Set(params.pattiIds));
+    const idempotencyKey =
+      params.idempotencyKey?.trim() ||
+      `FSR-${params.farmerId}-${uniquePattiIds.sort().join('-')}-${settlementDate}`;
+
+    const existingJe = this.db
+      .prepare('SELECT id FROM journal_entries WHERE idempotency_key = ?')
+      .get(`JE-FSR-${idempotencyKey}`) as { id: string } | undefined;
+    if (existingJe) {
+      throw new Error(
+        'Duplicate settlement prevented: this Farmer Patti Direct Settlement has already been completed.'
+      );
+    }
+
+    const tx = this.db.transaction(() => {
+      const farmerRow = this.db
+        .prepare('SELECT * FROM parties WHERE id = ?')
+        .get(params.farmerId) as Record<string, unknown> | undefined;
+      if (!farmerRow) {
+        throw new Error(`Farmer not found: ${params.farmerId}`);
+      }
+
+      const pattis = uniquePattiIds.map((pid) => this.getFarmerPattiById(pid));
+      for (const fp of pattis) {
+        if (fp.farmerId !== params.farmerId) {
+          throw new Error(
+            `Farmer Patti ${fp.pattiNo} does not belong to selected farmer ${String(farmerRow.name)}.`
+          );
+        }
+        if (fp.balancePayablePaise <= 0) {
+          throw new Error(
+            `Duplicate settlement prevented: Farmer Patti ${fp.pattiNo} is already settled in full (balance ₹0.00).`
+          );
+        }
+      }
+
+      const totalBags = pattis.reduce((s, p) => s + p.totalBags, 0);
+      const totalNetWeightGrams = pattis.reduce((s, p) => s + p.totalNetWeightGrams, 0);
+      const grossCropValuePaise = pattis.reduce((s, p) => s + p.grossCropAmountPaise, 0);
+      const commissionDeductionPaise = pattis.reduce((s, p) => s + p.commissionAmountPaise, 0);
+      const hamaliDeductionPaise = pattis.reduce((s, p) => s + p.hamaliAmountPaise, 0);
+      const vehicleRentAndWeighmentPaise = pattis.reduce((s, p) => s + p.weighmentFeePaise, 0);
+      const mandiAndOtherDeductionsPaise = pattis.reduce(
+        (s, p) => s + p.mandiFeePaise + p.otherDeductionsPaise,
+        0
+      );
+      const loanPrincipalRecoveredPaise = pattis.reduce(
+        (s, p) => s + p.loanPrincipalRecoveredPaise,
+        0
+      );
+      const loanInterestRecoveredPaise = pattis.reduce(
+        (s, p) => s + p.loanInterestRecoveredPaise,
+        0
+      );
+      const previouslyPaidPaise = pattis.reduce((s, p) => s + p.amountPaidNowPaise, 0);
+      const finalNetPayablePaise = pattis.reduce((s, p) => s + p.balancePayablePaise, 0);
+
+      const settlementAmountPaidPaise =
+        params.settlementAmountPaise !== undefined
+          ? Math.round(Number(params.settlementAmountPaise))
+          : finalNetPayablePaise;
+
+      if (settlementAmountPaidPaise <= 0) {
+        throw new Error('Settlement amount must be greater than ₹0.');
+      }
+      if (settlementAmountPaidPaise > finalNetPayablePaise) {
+        throw new Error(
+          `Settlement amount (₹${(settlementAmountPaidPaise / 100).toFixed(2)}) cannot exceed final net payable balance (₹${(finalNetPayablePaise / 100).toFixed(2)}).`
+        );
+      }
+
+      const paymentMode = params.paymentMode === 'BANK' ? 'BANK' : 'CASH';
+      const bankAccountId = paymentMode === 'BANK' ? params.bankAccountId ?? null : null;
+      if (paymentMode === 'BANK' && !bankAccountId) {
+        throw new Error('Bank account selection is required for Bank mode settlement.');
+      }
+
+      const receiptNo = `FSR-${settlementDate.replace(/-/g, '')}-${crypto
+        .randomBytes(2)
+        .toString('hex')
+        .toUpperCase()}`;
+
+      // Post balanced Double-Entry Journal Entry: Dr 2001 (Farmer Trade Payable), Cr 1001/1002 (Cash/Bank)
+      const creditAccountCode = paymentMode === 'BANK' ? '1002' : '1001';
+      const creditCashDir: CashFlowDirection = paymentMode === 'BANK' ? 'BANK_OUT' : 'CASH_OUT';
+
+      const je = this.postJournalEntry({
+        transactionDate: settlementDate,
+        sourceType: 'FARMER_PATTI',
+        sourceId: receiptNo,
+        idempotencyKey: `JE-FSR-${idempotencyKey}`,
+        narration: `Direct Settlement Receipt ${receiptNo} for Farmer ${String(farmerRow.name)} (${pattis
+          .map((p) => p.pattiNo)
+          .join(', ')})`,
+        lines: [
+          {
+            accountCode: '2001',
+            partyId: params.farmerId,
+            ledgerBucket: 'CROP_PROCEEDS',
+            debitPaise: settlementAmountPaidPaise,
+            creditPaise: 0,
+            cashDirection: 'NON_CASH',
+            lineNote: `Direct Settlement of Farmer Patti(s): ${pattis.map((p) => p.pattiNo).join(', ')}`,
+          },
+          {
+            accountCode: creditAccountCode,
+            partyId: params.farmerId,
+            bankAccountId,
+            ledgerBucket: 'CROP_PROCEEDS',
+            debitPaise: 0,
+            creditPaise: settlementAmountPaidPaise,
+            cashDirection: creditCashDir,
+            lineNote: `Direct Settlement payout (${paymentMode}) — Receipt ${receiptNo}`,
+          },
+        ],
+        actor: params.actor,
+      });
+
+      // Allocate settlement across selected pattis in order
+      let remainingToAllocate = settlementAmountPaidPaise;
+      for (const fp of pattis) {
+        if (remainingToAllocate <= 0) break;
+        const allocateHere = Math.min(fp.balancePayablePaise, remainingToAllocate);
+        const newPaid = fp.amountPaidNowPaise + allocateHere;
+        const newBal = Math.max(0, fp.balancePayablePaise - allocateHere);
+        const nextMode: PattiSettlementPaymentMode =
+          newBal === 0
+            ? paymentMode === 'BANK'
+              ? 'BANK_TRANSFER'
+              : 'CASH'
+            : fp.paymentMode;
+
+        this.db
+          .prepare(
+            `UPDATE farmer_pattis
+             SET amount_paid_now_paise = ?, balance_payable_paise = ?, payment_mode = ?, bank_account_id = COALESCE(?, bank_account_id)
+             WHERE id = ?`
+          )
+          .run(newPaid, newBal, nextMode, bankAccountId, fp.id);
+
+        remainingToAllocate -= allocateHere;
+      }
+
+      const remainingBalancePayablePaise = Math.max(
+        0,
+        finalNetPayablePaise - settlementAmountPaidPaise
+      );
+      const nowIso = new Date().toISOString();
+
+      const receipt: FarmerDirectSettlementReceipt = {
+        receiptNo,
+        settlementDate,
+        farmerId: params.farmerId,
+        farmerCode: String(farmerRow.party_code),
+        farmerName: String(farmerRow.name),
+        farmerVillage: String(farmerRow.village || ''),
+        farmerPhone: String(farmerRow.phone_primary || ''),
+        pattiIds: pattis.map((p) => p.id),
+        pattiNumbers: pattis.map((p) => p.pattiNo),
+        totalBags,
+        totalNetWeightGrams,
+        grossCropValuePaise,
+        commissionDeductionPaise,
+        hamaliDeductionPaise,
+        vehicleRentAndWeighmentPaise,
+        mandiAndOtherDeductionsPaise,
+        loanPrincipalRecoveredPaise,
+        loanInterestRecoveredPaise,
+        previouslyPaidPaise,
+        finalNetPayablePaise,
+        settlementAmountPaidPaise,
+        remainingBalancePayablePaise,
+        paymentMode,
+        bankAccountId,
+        journalEntryId: je.id,
+        settledBy: params.actor.fullName,
+        createdAt: nowIso,
+      };
+
+      this.recordAuditLog({
+        entityType: 'FARMER_PATTI',
+        entityId: receiptNo,
+        action: 'DIRECT_SETTLE_FARMER_PATTI',
+        afterData: receipt as unknown as Record<string, unknown>,
+        reason: params.notes?.trim() || `Direct Settlement ${receiptNo} for ${String(farmerRow.name)}`,
+        approvedBy: params.actor.fullName,
+        actor: params.actor,
+      });
+
+      const updatedPattis = uniquePattiIds.map((pid) => this.getFarmerPattiById(pid));
+      return { receipt, updatedPattis };
+    });
+
+    return tx();
   }
 
   /**

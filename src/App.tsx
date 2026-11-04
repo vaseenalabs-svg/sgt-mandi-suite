@@ -20,6 +20,7 @@ import {
   DalaliVikriPattiRecord,
   DocumentSeriesType,
   DuplicateWarningItem,
+  FarmerDirectSettlementReceipt,
   FarmerPattiRecord,
   IssuedDocumentNumber,
   JournalEntryRecord,
@@ -57,12 +58,15 @@ import { KhataBookView } from './components/KhataBookView';
 import { CashBankAndLoansView } from './components/CashBankAndLoansView';
 import { PattiAndBillingView } from './components/PattiAndBillingView';
 import { OperationsReportsAndDayCloseView } from './components/OperationsReportsAndDayCloseView';
+import { DashboardView } from './components/DashboardView';
 import { FloatingCalculator } from './components/FloatingCalculator';
+import { FloatingQuickActionMenu } from './components/FloatingQuickActionMenu';
 import { LoginPage } from './components/LoginPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogOut, KeyRound, CheckCircle2, AlertCircle } from 'lucide-react';
 
 type ActiveSection =
+  | 'dashboard'
   | 'stock'
   | 'pattis'
   | 'parties'
@@ -84,7 +88,7 @@ function getTodayIST(): string {
 }
 
 export default function App() {
-  const [activeSection, setActiveSection] = useState<ActiveSection>('stock');
+  const [activeSection, setActiveSection] = useState<ActiveSection>('dashboard');
   const [lang, setLang] = useState<LanguageCode>('en');
   const [isCalculatorOpen, setIsCalculatorOpen] = useState<boolean>(false);
   const [businessDate] = useState<string>(getTodayIST());
@@ -467,12 +471,22 @@ export default function App() {
     referenceBagWeightKg: number | null;
     lowStockThresholdQuintals: number;
     standardRatePerQuintalPaise: number;
+    gstApplicableDefault?: boolean;
+    cgstRateBps?: number;
+    sgstRateBps?: number;
+    openingQuantityQuintals?: number;
+    openingRatePerQuintalPaise?: number;
+    godownLocation?: string;
+    openingDate?: string;
   }) => {
     const data = await apiFetch('/api/stock/commodities', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
     setStockStatuses(data.stockStatuses);
+    if (data.stockMovements) {
+      setStockMovements(data.stockMovements);
+    }
     await loadBootstrap();
   };
 
@@ -729,6 +743,24 @@ export default function App() {
     return data.farmerPatti as FarmerPattiRecord;
   };
 
+  const handleDirectSettleFarmerPattis = async (payload: {
+    farmerId: string;
+    pattiIds: string[];
+    settlementDate?: string;
+    settlementAmountPaise?: number;
+    paymentMode: 'CASH' | 'BANK';
+    bankAccountId?: string | null;
+    idempotencyKey?: string;
+    notes?: string;
+  }): Promise<FarmerDirectSettlementReceipt> => {
+    const data = await apiFetch('/api/pattis/farmer/direct-settlement', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    await loadBootstrap();
+    return data.receipt as FarmerDirectSettlementReceipt;
+  };
+
   const handleCreateKharidiPatti = async (
     payload: Record<string, unknown>
   ): Promise<KharidiPattiRecord> => {
@@ -867,14 +899,25 @@ export default function App() {
           href="#top"
           onClick={(e) => {
             e.preventDefault();
-            setActiveSection('stock');
+            setActiveSection('dashboard');
           }}
-          className="text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0 font-display"
+          className="text-lg font-bold tracking-tight text-emerald-800 whitespace-nowrap shrink-0 font-display"
         >
           {t(lang, 'brandName')}
         </a>
 
-        <nav className="hidden lg:flex items-center gap-5 text-xs font-medium text-slate-600 overflow-x-auto">
+        <nav className="flex items-center gap-5 text-xs font-medium text-slate-600 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setActiveSection('dashboard')}
+            className={`transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
+              activeSection === 'dashboard'
+                ? 'text-emerald-700 border-emerald-600 font-semibold'
+                : 'border-transparent hover:text-slate-900'
+            }`}
+          >
+            {lang === 'kn' ? 'ಡ್ಯಾಶ್‌ಬೋರ್ಡ್' : 'Dashboard'}
+          </button>
           <button
             type="button"
             onClick={() => setActiveSection('stock')}
@@ -1039,13 +1082,13 @@ export default function App() {
           )}
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-3">
           {users.length > 0 && (
             <select
               aria-label="Switch Active User Role"
               value={activeUserId}
               onChange={(e) => handleSelectActiveUser(e.target.value)}
-              className="apple-input py-1 px-2.5 text-xs font-medium h-7"
+              className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-2xs focus:border-blue-600 focus:outline-none"
             >
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
@@ -1055,14 +1098,14 @@ export default function App() {
             </select>
           )}
 
-          <div className="flex items-center gap-0.5 p-0.5 bg-slate-200/70 rounded-lg h-7">
+          <div className="inline-flex items-center gap-1 p-1 bg-slate-200/80 rounded-xl border border-slate-300/60">
             <button
               type="button"
               onClick={() => setLang('en')}
-              className={`px-2.5 py-0.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap shrink-0 ${
+              className={`px-3 py-1 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 ${
                 lang === 'en'
                   ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-700 hover:text-slate-900'
               }`}
             >
               English
@@ -1070,10 +1113,10 @@ export default function App() {
             <button
               type="button"
               onClick={() => setLang('kn')}
-              className={`px-2.5 py-0.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap shrink-0 ${
+              className={`px-3 py-1 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 ${
                 lang === 'kn'
                   ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  : 'text-slate-700 hover:text-slate-900'
               }`}
             >
               ಕನ್ನಡ
@@ -1106,13 +1149,47 @@ export default function App() {
           </div>
         ) : settings && activeUser ? (
           <ErrorBoundary key={activeSection} sectionName={activeSection}>
+            {activeSection === 'dashboard' && (
+              <DashboardView
+                lang={lang}
+                activeUser={activeUser}
+                businessDate={businessDate}
+                settings={settings}
+                parties={parties}
+                stockStatuses={stockStatuses}
+                stockMovements={stockMovements}
+                farmerPattis={farmerPattis}
+                kharidiPattis={kharidiPattis}
+                dalaliVikriPattis={dalaliVikriPattis}
+                dalaliKharidiPattis={dalaliKharidiPattis}
+                cashCreditBills={cashCreditBills}
+                buyerCollections={buyerCollections}
+                expensesCommitments={expensesCommitments}
+                bankAccounts={bankAccounts}
+                loans={loans}
+                khata={khata}
+                cashInHandBalancePaise={cashInHandBalancePaise}
+                onNavigate={(sec) => setActiveSection(sec)}
+                onRecordBuyerCollection={handleRecordBuyerCollection}
+                onRecordExpenseOrCommitment={handleRecordExpenseOrCommitment}
+                onPostJournalEntry={handlePostJournalEntry}
+              />
+            )}
+
             {activeSection === 'stock' && (
               <StockStatusView
                 stockStatuses={stockStatuses}
                 stockMovements={stockMovements}
                 parties={parties}
+                farmerPattis={farmerPattis}
+                kharidiPattis={kharidiPattis}
+                dalaliVikriPattis={dalaliVikriPattis}
+                dalaliKharidiPattis={dalaliKharidiPattis}
+                cashCreditBills={cashCreditBills}
+                businessDate={businessDate}
                 activeUser={activeUser}
                 lang={lang}
+                onRefresh={() => loadBootstrap()}
                 onRecordMovement={handleRecordStockMovement}
                 onSeedStandardCommodities={handleSeedStandardCommodities}
                 onCreateCommodity={handleCreateCommodity}
@@ -1136,6 +1213,7 @@ export default function App() {
                 dalaliKharidiPattis={dalaliKharidiPattis}
                 cashCreditBills={cashCreditBills}
                 onCreateFarmerPatti={handleCreateFarmerPatti}
+                onDirectSettleFarmerPattis={handleDirectSettleFarmerPattis}
                 onCreateKharidiPatti={handleCreateKharidiPatti}
                 onCreateDalaliVikriPatti={handleCreateDalaliVikriPatti}
                 onCreateDalaliKharidiPatti={handleCreateDalaliKharidiPatti}
@@ -1275,6 +1353,21 @@ export default function App() {
           onClose={() => setIsCalculatorOpen(false)}
           lang={lang}
           settings={settings}
+        />
+      )}
+
+      {/* Persistent Floating Quick Action Menu (Section C) */}
+      {settings && activeUser && (
+        <FloatingQuickActionMenu
+          businessDate={businessDate}
+          parties={parties}
+          bankAccounts={bankAccounts}
+          stockStatuses={stockStatuses}
+          onNavigateSection={(sec) => setActiveSection(sec)}
+          onCreateVoucher={handleRecordExpenseOrCommitment}
+          onPostJournalEntry={handlePostJournalEntry}
+          onRegisterParty={handleRegisterParty}
+          onRecordMovement={handleRecordStockMovement}
         />
       )}
 

@@ -740,6 +740,8 @@ export type KharidiPaymentMode = 'CREDIT' | 'CASH' | 'BANK_TRANSFER';
 export interface KharidiPattiLineInput {
   commodityId: string;
   bags: number;
+  grossWeightGrams?: number;
+  tareWeightGrams?: number;
   netWeightGrams: number;
   ratePerQuintalPaise: number;
   gstApplicable?: boolean;
@@ -757,6 +759,8 @@ export interface KharidiPattiLineRecord {
   commodityNameEn: string;
   commodityNameKn: string;
   bags: number;
+  grossWeightGrams?: number;
+  tareWeightGrams?: number;
   netWeightGrams: number;
   ratePerQuintalPaise: number;
   baseAmountPaise: number;
@@ -879,6 +883,8 @@ export interface DalaliKharidiLineInput {
   commodityId: string;
   bags: number;
   andiges?: number;
+  grossWeightGrams?: number;
+  tareWeightGrams?: number;
   netWeightGrams: number;
   ratePerQuintalPaise: number;
   gstApplicable?: boolean;
@@ -897,6 +903,8 @@ export interface DalaliKharidiLineRecord {
   commodityNameKn: string;
   bags: number;
   andiges: number;
+  grossWeightGrams?: number;
+  tareWeightGrams?: number;
   netWeightGrams: number;
   ratePerQuintalPaise: number;
   baseAmountPaise: number;
@@ -962,6 +970,8 @@ export interface CashCreditBillLineInput {
   commodityId: string;
   bags: number;
   andiges?: number;
+  grossWeightGrams?: number;
+  tareWeightGrams?: number;
   netWeightGrams: number;
   ratePerQuintalPaise: number;
   hsnCode?: string;
@@ -982,6 +992,8 @@ export interface CashCreditBillLineRecord {
   hsnCode: string;
   bags: number;
   andiges: number;
+  grossWeightGrams?: number;
+  tareWeightGrams?: number;
   netWeightGrams: number;
   ratePerQuintalPaise: number;
   baseAmountPaise: number;
@@ -1251,5 +1263,36 @@ export interface SystemBackupSnapshot {
   totalAccountingCreditPaise: number;
   payload: Record<string, unknown[]>;
 }
+
+export interface FarmerDirectSettlementReceipt {
+  receiptNo: string;
+  settlementDate: string;
+  farmerId: string;
+  farmerCode: string;
+  farmerName: string;
+  farmerVillage: string;
+  farmerPhone: string;
+  pattiIds: string[];
+  pattiNumbers: string[];
+  totalBags: number;
+  totalNetWeightGrams: number;
+  grossCropValuePaise: number;
+  commissionDeductionPaise: number;
+  hamaliDeductionPaise: number;
+  vehicleRentAndWeighmentPaise: number;
+  mandiAndOtherDeductionsPaise: number;
+  loanPrincipalRecoveredPaise: number;
+  loanInterestRecoveredPaise: number;
+  previouslyPaidPaise: number;
+  finalNetPayablePaise: number;
+  settlementAmountPaidPaise: number;
+  remainingBalancePayablePaise: number;
+  paymentMode: 'CASH' | 'BANK';
+  bankAccountId: string | null;
+  journalEntryId: string;
+  settledBy: string;
+  createdAt: string;
+}
+
 
 

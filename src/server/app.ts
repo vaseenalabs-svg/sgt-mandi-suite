@@ -272,9 +272,34 @@ export function createApiApp(db: Database.Database): express.Express {
         hamaliPerBagPaise: Number(req.body.hamaliPerBagPaise ?? 0),
         actor,
       });
+
+      const openingQtyQ = Number(req.body.openingQuantityQuintals ?? 0);
+      if (openingQtyQ > 0) {
+        const openingGrams = Math.round(openingQtyQ * 100_000);
+        const openingRatePaise = Number(
+          req.body.openingRatePerQuintalPaise ?? req.body.standardRatePerQuintalPaise ?? 0
+        );
+        const godownLoc = String(req.body.godownLocation || 'MANDI').trim();
+        coreService.recordStockMovement({
+          commodityId: created.id,
+          transactionDate: String(req.body.openingDate || new Date().toISOString().slice(0, 10)),
+          direction: 'OPENING',
+          ownershipType: 'SGT_OWNED',
+          bags: Number(req.body.openingBags ?? Math.max(1, Math.round(openingQtyQ * 2))),
+          weightGrams: openingGrams,
+          ratePerQuintalPaise: openingRatePaise,
+          partyName: `Opening Stock (${godownLoc})`,
+          referenceBillNo: `OPN-${created.code}`,
+          idempotencyKey: `OPENING-STOCK-${created.id}`,
+          reason: `Opening Stock in ${godownLoc}`,
+          actor,
+        });
+      }
+
       res.json({
         commodity: created,
         stockStatuses: coreService.listCommodityStockStatus(),
+        stockMovements: coreService.listStockMovements(),
       });
     } catch (err) {
       handleError(res, err);
@@ -1220,6 +1245,35 @@ export function createApiApp(db: Database.Database): express.Express {
         loanTransactions: coreService.listLoanTransactions(),
         stockStatuses: coreService.listCommodityStockStatus(),
         stockMovements: coreService.listStockMovements(),
+        khata: coreService.getCompanyKhataBook(),
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  app.post('/api/pattis/farmer/direct-settlement', (req, res) => {
+    try {
+      const actor = resolveActor(req);
+      const result = coreService.settleFarmerPattisDirect({
+        farmerId: String(req.body.farmerId || ''),
+        pattiIds: Array.isArray(req.body.pattiIds) ? req.body.pattiIds.map(String) : [],
+        settlementDate: req.body.settlementDate ? String(req.body.settlementDate) : undefined,
+        settlementAmountPaise:
+          req.body.settlementAmountPaise !== undefined
+            ? Number(req.body.settlementAmountPaise)
+            : undefined,
+        paymentMode: req.body.paymentMode === 'BANK' ? 'BANK' : 'CASH',
+        bankAccountId: req.body.bankAccountId ? String(req.body.bankAccountId) : null,
+        idempotencyKey: req.body.idempotencyKey ? String(req.body.idempotencyKey) : undefined,
+        notes: req.body.notes ? String(req.body.notes) : '',
+        actor,
+      });
+
+      res.json({
+        receipt: result.receipt,
+        updatedPattis: result.updatedPattis,
+        farmerPattis: coreService.listFarmerPattis(),
         khata: coreService.getCompanyKhataBook(),
       });
     } catch (err) {

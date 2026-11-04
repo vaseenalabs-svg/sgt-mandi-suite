@@ -24,6 +24,7 @@ import {
   DalaliKharidiPattiRecord,
   DalaliVikriLineInput,
   DalaliVikriPattiRecord,
+  FarmerDirectSettlementReceipt,
   FarmerPattiLineInput,
   FarmerPattiRecord,
   KharidiPattiLineInput,
@@ -151,11 +152,23 @@ interface PattiAndBillingViewProps {
     billId: string,
     payload: { reversalDate: string; reason: string }
   ) => Promise<CashCreditBillRecord>;
+  onDirectSettleFarmerPattis?: (payload: {
+    farmerId: string;
+    pattiIds: string[];
+    settlementDate?: string;
+    settlementAmountPaise?: number;
+    paymentMode: 'CASH' | 'BANK';
+    bankAccountId?: string | null;
+    idempotencyKey?: string;
+    notes?: string;
+  }) => Promise<FarmerDirectSettlementReceipt>;
 }
 
 interface DraftFarmerLine {
   commodityId: string;
   bags: string;
+  weightPerBagKg: string;
+  grossWeightQuintals: string;
   weightQuintals: string;
   moisturePct: string;
   rateRupees: string;
@@ -164,6 +177,8 @@ interface DraftFarmerLine {
 interface DraftKharidiLine {
   commodityId: string;
   bags: string;
+  weightPerBagKg: string;
+  grossWeightQuintals: string;
   weightQuintals: string;
   rateRupees: string;
   gstApplicable: boolean;
@@ -174,12 +189,47 @@ interface DraftKharidiLine {
 interface DraftDalaliLine {
   commodityId: string;
   bags: string;
+  weightPerBagKg: string;
+  grossWeightQuintals: string;
   andiges: string;
   weightQuintals: string;
   rateRupees: string;
   gstApplicable: boolean;
   cgstPct: string;
   sgstPct: string;
+}
+
+function computeLineWeightBreakdown(line: {
+  bags: string;
+  weightPerBagKg?: string;
+  grossWeightQuintals?: string;
+  weightQuintals: string;
+}) {
+  const bags = Math.max(0, Math.round(Number(line.bags || 0)));
+  const weightPerBagKg = Math.max(0, Number(line.weightPerBagKg || 0));
+  const totalBagWeightKg = +(bags * weightPerBagKg).toFixed(3);
+  const totalBagWeightQuintals = +(totalBagWeightKg / 100).toFixed(4);
+  const grossWeightQuintalsRaw = Math.max(0, Number(line.grossWeightQuintals || 0));
+  const manualNetWeightQuintals = Math.max(0, Number(line.weightQuintals || 0));
+  const netWeightQuintals =
+    grossWeightQuintalsRaw > 0
+      ? Math.max(0, +(grossWeightQuintalsRaw - totalBagWeightQuintals).toFixed(4))
+      : manualNetWeightQuintals;
+  const effectiveGrossQuintals =
+    grossWeightQuintalsRaw > 0
+      ? grossWeightQuintalsRaw
+      : +(netWeightQuintals + totalBagWeightQuintals).toFixed(4);
+  return {
+    bags,
+    weightPerBagKg,
+    totalBagWeightKg,
+    totalBagWeightQuintals,
+    grossWeightQuintals: effectiveGrossQuintals,
+    netWeightQuintals,
+    grossWeightGrams: Math.round(effectiveGrossQuintals * 100_000),
+    tareWeightGrams: Math.round(totalBagWeightKg * 1000),
+    netWeightGrams: Math.round(netWeightQuintals * 100_000),
+  };
 }
 
 export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
@@ -202,6 +252,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
   onCreateDalaliKharidiPatti,
   onCreateCashCreditBill,
   onReverseCashCreditBill,
+  onDirectSettleFarmerPattis,
 }) => {
   const [activeTab, setActiveTab] = useState<
     'FARMER_PATTI' | 'KHARIDI_PATTI' | 'DALALI_SECTION' | 'CASH_CREDIT_BILL'
@@ -210,6 +261,16 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
   const [selectedFarmerPatti, setSelectedFarmerPatti] = useState<FarmerPattiRecord | null>(
     farmerPattis[0] ?? null
   );
+  // --- Direct Settlement State (Section E) ---
+  const [dsFarmerId, setDsFarmerId] = useState<string>('');
+  const [dsSelectedPattiIds, setDsSelectedPattiIds] = useState<string[]>([]);
+  const [dsSettlementDate, setDsSettlementDate] = useState<string>(businessDate);
+  const [dsCustomAmountRs, setDsCustomAmountRs] = useState<string>('');
+  const [dsPaymentMode, setDsPaymentMode] = useState<'CASH' | 'BANK'>('CASH');
+  const [dsBankAccountId, setDsBankAccountId] = useState<string>(bankAccounts[0]?.id ?? '');
+  const [dsNotes, setDsNotes] = useState<string>('');
+  const [dsReceipt, setDsReceipt] = useState<FarmerDirectSettlementReceipt | null>(null);
+  const [dsSubmitting, setDsSubmitting] = useState<boolean>(false);
   const [selectedKharidiPatti, setSelectedKharidiPatti] = useState<KharidiPattiRecord | null>(
     kharidiPattis[0] ?? null
   );
@@ -263,6 +324,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     {
       commodityId: stockStatuses[0]?.commodity.id ?? '',
       bags: '',
+      weightPerBagKg: '0.5',
+      grossWeightQuintals: '',
       weightQuintals: '',
       moisturePct: '0',
       rateRupees: '',
@@ -296,6 +359,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     {
       commodityId: stockStatuses[0]?.commodity.id ?? '',
       bags: '',
+      weightPerBagKg: '0.5',
+      grossWeightQuintals: '',
       weightQuintals: '',
       rateRupees: '',
       gstApplicable: false,
@@ -321,6 +386,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     {
       commodityId: stockStatuses[0]?.commodity.id ?? '',
       bags: '',
+      weightPerBagKg: '0.5',
+      grossWeightQuintals: '',
       andiges: '1',
       weightQuintals: '',
       rateRupees: '',
@@ -334,7 +401,9 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
   );
   const [dvHamaliRupees, setDvHamaliRupees] = useState<string>('0');
   const [dvNiituRupees, setDvNiituRupees] = useState<string>('0');
+  const [dvTukadPerBagRupees, setDvTukadPerBagRupees] = useState<string>('0');
   const [dvTukadRupees, setDvTukadRupees] = useState<string>('0');
+  const [dvRmcPct, setDvRmcPct] = useState<string>('1.5');
   const [dvRmcRupees, setDvRmcRupees] = useState<string>('0');
   const [dvVehicleRentRupees, setDvVehicleRentRupees] = useState<string>('0');
   const [dvHandLoanRupees, setDvHandLoanRupees] = useState<string>('0');
@@ -361,6 +430,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     {
       commodityId: stockStatuses[0]?.commodity.id ?? '',
       bags: '',
+      weightPerBagKg: '0.5',
+      grossWeightQuintals: '',
       andiges: '1',
       weightQuintals: '',
       rateRupees: '',
@@ -380,6 +451,41 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
   const [cbBankAccountId, setCbBankAccountId] = useState<string>(bankAccounts[0]?.id ?? '');
   const [cbAmountReceivedRupees, setCbAmountReceivedRupees] = useState<string>('0');
   const [cbNotes, setCbNotes] = useState<string>('');
+  const [cbSubView, setCbSubView] = useState<'CASH_CREDIT_INVOICE' | 'SEPARATE_KHARIDI_PATTI'>(
+    'CASH_CREDIT_INVOICE'
+  );
+  // --- Section H & I: Separate Kharidi Patti (ಖರೀದಿ ಪಟ್ಟಿ) State inside Cash/Credit Bill ---
+  const [skpNo, setSkpNo] = useState<string>('120');
+  const [skpDate, setSkpDate] = useState<string>(businessDate);
+  const [skpPartyId, setSkpPartyId] = useState<string>(farmers[0]?.id ?? '');
+  const [skpFarmerName, setSkpFarmerName] = useState<string>(farmers[0]?.name ?? '');
+  const [skpVillage, setSkpVillage] = useState<string>(farmers[0]?.village ?? '');
+  const [skpLines, setSkpLines] = useState<
+    Array<{
+      commodityId: string;
+      commodityName: string;
+      bags: string;
+      weightPerBagKg: string;
+      grossWeightKg: string;
+      qtyQuintals: string;
+      qtyKg: string;
+      ratePerQuintalRupees: string;
+    }>
+  >([
+    {
+      commodityId: stockStatuses[0]?.commodity.id ?? '',
+      commodityName:
+        stockStatuses[0]?.commodity.nameKn ||
+        stockStatuses[0]?.commodity.nameEn ||
+        'ಮೆಕ್ಕೆಜೋಳ / Maize',
+      bags: '10',
+      weightPerBagKg: '0.5',
+      grossWeightKg: '605',
+      qtyQuintals: '6',
+      qtyKg: '0',
+      ratePerQuintalRupees: '2250',
+    },
+  ]);
 
   // Active loan detection for selected Farmer
   const selectedFarmerLoans = useMemo(
@@ -402,12 +508,11 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     let grossCropAmountPaise = 0;
 
     fpLines.forEach((line) => {
-      const bags = Math.max(0, Math.round(Number(line.bags || 0)));
-      const weightGrams = Math.max(0, Math.round(Number(line.weightQuintals || 0) * 100_000));
+      const wb = computeLineWeightBreakdown(line);
       const ratePaise = rupeesToPaise(line.rateRupees || '0');
-      const grossPaise = Math.round((weightGrams / 100_000) * ratePaise);
-      totalBags += bags;
-      totalNetWeightGrams += weightGrams;
+      const grossPaise = Math.round((wb.netWeightGrams / 100_000) * ratePaise);
+      totalBags += wb.bags;
+      totalNetWeightGrams += wb.netWeightGrams;
       grossCropAmountPaise += grossPaise;
     });
 
@@ -515,18 +620,17 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     let totalGstPaise = 0;
 
     kpLines.forEach((line) => {
-      const bags = Math.max(0, Math.round(Number(line.bags || 0)));
-      const weightGrams = Math.max(0, Math.round(Number(line.weightQuintals || 0) * 100_000));
+      const wb = computeLineWeightBreakdown(line);
       const ratePaise = rupeesToPaise(line.rateRupees || '0');
-      const basePaise = Math.round((weightGrams / 100_000) * ratePaise);
+      const basePaise = Math.round((wb.netWeightGrams / 100_000) * ratePaise);
       const cgstBps = line.gstApplicable ? Math.round(Number(line.cgstPct || 0) * 100) : 0;
       const sgstBps = line.gstApplicable ? Math.round(Number(line.sgstPct || 0) * 100) : 0;
       const gstPaise = line.gstApplicable
         ? Math.round((basePaise * (cgstBps + sgstBps)) / 10_000)
         : 0;
 
-      totalBags += bags;
-      totalNetWeightGrams += weightGrams;
+      totalBags += wb.bags;
+      totalNetWeightGrams += wb.netWeightGrams;
       totalBaseAmountPaise += basePaise;
       totalGstPaise += gstPaise;
     });
@@ -566,14 +670,14 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
       }
 
       const items: FarmerPattiLineInput[] = fpLines.map((l) => {
-        const netWeightGrams = Math.round(Number(l.weightQuintals || 0) * 100_000);
+        const wb = computeLineWeightBreakdown(l);
         return {
           commodityId: l.commodityId || stockStatuses[0]?.commodity.id || '',
-          bags: Math.round(Number(l.bags || 0)),
-          grossWeightGrams: netWeightGrams,
-          tareWeightGrams: 0,
+          bags: wb.bags,
+          grossWeightGrams: wb.grossWeightGrams,
+          tareWeightGrams: wb.tareWeightGrams,
           moisturePct: Number(l.moisturePct || 0),
-          netWeightGrams,
+          netWeightGrams: wb.netWeightGrams,
           ratePerQuintalPaise: rupeesToPaise(l.rateRupees || '0'),
         };
       });
@@ -609,6 +713,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
         {
           commodityId: stockStatuses[0]?.commodity.id ?? '',
           bags: '',
+          weightPerBagKg: '0.5',
+          grossWeightQuintals: '',
           weightQuintals: '',
           moisturePct: '0',
           rateRupees: '',
@@ -642,16 +748,21 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
         throw new Error('Please register at least one Buyer in Parties & Farmers first.');
       }
 
-      const items: KharidiPattiLineInput[] = kpLines.map((l) => ({
-        commodityId: l.commodityId || stockStatuses[0]?.commodity.id || '',
-        bags: Math.round(Number(l.bags || 0)),
-        netWeightGrams: Math.round(Number(l.weightQuintals || 0) * 100_000),
-        ratePerQuintalPaise: rupeesToPaise(l.rateRupees || '0'),
-        gstApplicable: l.gstApplicable,
-        cgstRateBps: l.gstApplicable ? Math.round(Number(l.cgstPct || 0) * 100) : 0,
-        sgstRateBps: l.gstApplicable ? Math.round(Number(l.sgstPct || 0) * 100) : 0,
-        igstRateBps: 0,
-      }));
+      const items: KharidiPattiLineInput[] = kpLines.map((l) => {
+        const wb = computeLineWeightBreakdown(l);
+        return {
+          commodityId: l.commodityId || stockStatuses[0]?.commodity.id || '',
+          bags: wb.bags,
+          grossWeightGrams: wb.grossWeightGrams,
+          tareWeightGrams: wb.tareWeightGrams,
+          netWeightGrams: wb.netWeightGrams,
+          ratePerQuintalPaise: rupeesToPaise(l.rateRupees || '0'),
+          gstApplicable: l.gstApplicable,
+          cgstRateBps: l.gstApplicable ? Math.round(Number(l.cgstPct || 0) * 100) : 0,
+          sgstRateBps: l.gstApplicable ? Math.round(Number(l.sgstPct || 0) * 100) : 0,
+          igstRateBps: 0,
+        };
+      });
 
       const linkedFp = farmerPattis.find((fp) => fp.id === kpLinkedFarmerPattiId) ?? null;
 
@@ -681,6 +792,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
         {
           commodityId: stockStatuses[0]?.commodity.id ?? '',
           bags: '',
+          weightPerBagKg: '0.5',
+          grossWeightQuintals: '',
           weightQuintals: '',
           rateRupees: '',
           gstApplicable: false,
@@ -711,20 +824,19 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     let totalGstPaise = 0;
 
     dvLines.forEach((line) => {
-      const bags = Math.max(0, Math.round(Number(line.bags || 0)));
+      const wb = computeLineWeightBreakdown(line);
       const andiges = Math.max(0, Math.round(Number(line.andiges || 0)));
-      const weightGrams = Math.max(0, Math.round(Number(line.weightQuintals || 0) * 100_000));
       const ratePaise = rupeesToPaise(line.rateRupees || '0');
-      const basePaise = Math.round((weightGrams / 100_000) * ratePaise);
+      const basePaise = Math.round((wb.netWeightGrams / 100_000) * ratePaise);
       const cgstBps = line.gstApplicable ? Math.round(Number(line.cgstPct || 0) * 100) : 0;
       const sgstBps = line.gstApplicable ? Math.round(Number(line.sgstPct || 0) * 100) : 0;
       const gstPaise = line.gstApplicable
         ? Math.round((basePaise * (cgstBps + sgstBps)) / 10_000)
         : 0;
 
-      totalBags += bags;
+      totalBags += wb.bags;
       totalAndiges += andiges;
-      totalNetWeightGrams += weightGrams;
+      totalNetWeightGrams += wb.netWeightGrams;
       totalBaseAmountPaise += basePaise;
       totalGstPaise += gstPaise;
     });
@@ -733,8 +845,14 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     const commissionAmountPaise = Math.round((totalBaseAmountPaise * commBps) / 10_000);
     const hamaliAmountPaise = rupeesToPaise(dvHamaliRupees || '0');
     const niituFeePaise = rupeesToPaise(dvNiituRupees || '0');
-    const tukadFeePaise = rupeesToPaise(dvTukadRupees || '0');
-    const rmcFeePaise = rupeesToPaise(dvRmcRupees || '0');
+    const tukadPerBagPaise = rupeesToPaise(dvTukadPerBagRupees || '0');
+    const tukadFeePaise =
+      tukadPerBagPaise > 0 ? totalBags * tukadPerBagPaise : rupeesToPaise(dvTukadRupees || '0');
+    const rmcBps = Math.max(0, Math.round(Number(dvRmcPct || 0) * 100));
+    const rmcFeePaise =
+      rmcBps > 0
+        ? Math.round((totalBaseAmountPaise * rmcBps) / 10_000)
+        : rupeesToPaise(dvRmcRupees || '0');
     const vehicleRentPaise = rupeesToPaise(dvVehicleRentRupees || '0');
     const handLoanAdvancePaise = rupeesToPaise(dvHandLoanRupees || '0');
 
@@ -766,7 +884,9 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
       commissionAmountPaise,
       hamaliAmountPaise,
       niituFeePaise,
+      tukadPerBagPaise,
       tukadFeePaise,
+      rmcBps,
       rmcFeePaise,
       vehicleRentPaise,
       handLoanAdvancePaise,
@@ -780,7 +900,9 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     dvCommPct,
     dvHamaliRupees,
     dvNiituRupees,
+    dvTukadPerBagRupees,
     dvTukadRupees,
+    dvRmcPct,
     dvRmcRupees,
     dvVehicleRentRupees,
     dvHandLoanRupees,
@@ -795,20 +917,19 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     let totalGstPaise = 0;
 
     cbLines.forEach((line) => {
-      const bags = Math.max(0, Math.round(Number(line.bags || 0)));
+      const wb = computeLineWeightBreakdown(line);
       const andiges = Math.max(0, Math.round(Number(line.andiges || 0)));
-      const weightGrams = Math.max(0, Math.round(Number(line.weightQuintals || 0) * 100_000));
       const ratePaise = rupeesToPaise(line.rateRupees || '0');
-      const basePaise = Math.round((weightGrams / 100_000) * ratePaise);
+      const basePaise = Math.round((wb.netWeightGrams / 100_000) * ratePaise);
       const cgstBps = line.gstApplicable ? Math.round(Number(line.cgstPct || 0) * 100) : 0;
       const sgstBps = line.gstApplicable ? Math.round(Number(line.sgstPct || 0) * 100) : 0;
       const gstPaise = line.gstApplicable
         ? Math.round((basePaise * (cgstBps + sgstBps)) / 10_000)
         : 0;
 
-      totalBags += bags;
+      totalBags += wb.bags;
       totalAndiges += andiges;
-      totalNetWeightGrams += weightGrams;
+      totalNetWeightGrams += wb.netWeightGrams;
       totalBaseAmountPaise += basePaise;
       totalGstPaise += gstPaise;
     });
@@ -855,13 +976,18 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
           throw new Error('Please register at least one Farmer first.');
         }
 
-        const items: DalaliVikriLineInput[] = dvLines.map((l) => ({
-          commodityId: l.commodityId || stockStatuses[0]?.commodity.id || '',
-          bags: Math.round(Number(l.bags || 0)),
-          andiges: Math.round(Number(l.andiges || 0)),
-          netWeightGrams: Math.round(Number(l.weightQuintals || 0) * 100_000),
-          ratePerQuintalPaise: rupeesToPaise(l.rateRupees || '0'),
-        }));
+        const items: DalaliVikriLineInput[] = dvLines.map((l) => {
+          const wb = computeLineWeightBreakdown(l);
+          return {
+            commodityId: l.commodityId || stockStatuses[0]?.commodity.id || '',
+            bags: wb.bags,
+            andiges: Math.round(Number(l.andiges || 0)),
+            grossWeightGrams: wb.grossWeightGrams,
+            tareWeightGrams: wb.tareWeightGrams,
+            netWeightGrams: wb.netWeightGrams,
+            ratePerQuintalPaise: rupeesToPaise(l.rateRupees || '0'),
+          };
+        });
 
         const created = await onCreateDalaliVikriPatti({
           pattiDate: dvDate,
@@ -895,23 +1021,28 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
           throw new Error('Please register at least one Buyer first.');
         }
 
-        const items: DalaliKharidiLineInput[] = dvLines.map((l) => ({
-          commodityId: l.commodityId || stockStatuses[0]?.commodity.id || '',
-          bags: Math.round(Number(l.bags || 0)),
-          andiges: Math.round(Number(l.andiges || 0)),
-          netWeightGrams: Math.round(Number(l.weightQuintals || 0) * 100_000),
-          ratePerQuintalPaise: rupeesToPaise(l.rateRupees || '0'),
-          gstApplicable: l.gstApplicable,
-          cgstRateBps: l.gstApplicable ? Math.round(Number(l.cgstPct || 0) * 100) : 0,
-          sgstRateBps: l.gstApplicable ? Math.round(Number(l.sgstPct || 0) * 100) : 0,
-          igstRateBps: 0,
-        }));
+        const items: DalaliKharidiLineInput[] = dvLines.map((l) => {
+          const wb = computeLineWeightBreakdown(l);
+          return {
+            commodityId: l.commodityId || stockStatuses[0]?.commodity.id || '',
+            bags: wb.bags,
+            andiges: Math.round(Number(l.andiges || 0)),
+            grossWeightGrams: wb.grossWeightGrams,
+            tareWeightGrams: wb.tareWeightGrams,
+            netWeightGrams: wb.netWeightGrams,
+            ratePerQuintalPaise: rupeesToPaise(l.rateRupees || '0'),
+            gstApplicable: l.gstApplicable,
+            cgstRateBps: l.gstApplicable ? Math.round(Number(l.cgstPct || 0) * 100) : 0,
+            sgstRateBps: l.gstApplicable ? Math.round(Number(l.sgstPct || 0) * 100) : 0,
+            igstRateBps: 0,
+          };
+        });
 
         const created = await onCreateDalaliKharidiPatti({
           pattiDate: dvDate,
           buyerId: targetBuyerId,
           linkedDalaliVikriId: selectedDalaliVikri?.id ?? null,
-          linkedFarmerId: dvFarmerId || null,
+          linkedFarmerId: null,
           classSerial: dvClassSerial.trim(),
           vehicleNo: dvVehicleNo.trim(),
           items,
@@ -950,17 +1081,22 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
         throw new Error('Please register at least one Buyer first.');
       }
 
-      const items: CashCreditBillLineInput[] = cbLines.map((l) => ({
-        commodityId: l.commodityId || stockStatuses[0]?.commodity.id || '',
-        bags: Math.round(Number(l.bags || 0)),
-        andiges: Math.round(Number(l.andiges || 0)),
-        netWeightGrams: Math.round(Number(l.weightQuintals || 0) * 100_000),
-        ratePerQuintalPaise: rupeesToPaise(l.rateRupees || '0'),
-        gstApplicable: l.gstApplicable,
-        cgstRateBps: l.gstApplicable ? Math.round(Number(l.cgstPct || 0) * 100) : 0,
-        sgstRateBps: l.gstApplicable ? Math.round(Number(l.sgstPct || 0) * 100) : 0,
-        igstRateBps: 0,
-      }));
+      const items: CashCreditBillLineInput[] = cbLines.map((l) => {
+        const wb = computeLineWeightBreakdown(l);
+        return {
+          commodityId: l.commodityId || stockStatuses[0]?.commodity.id || '',
+          bags: wb.bags,
+          andiges: Math.round(Number(l.andiges || 0)),
+          grossWeightGrams: wb.grossWeightGrams,
+          tareWeightGrams: wb.tareWeightGrams,
+          netWeightGrams: wb.netWeightGrams,
+          ratePerQuintalPaise: rupeesToPaise(l.rateRupees || '0'),
+          gstApplicable: l.gstApplicable,
+          cgstRateBps: l.gstApplicable ? Math.round(Number(l.cgstPct || 0) * 100) : 0,
+          sgstRateBps: l.gstApplicable ? Math.round(Number(l.sgstPct || 0) * 100) : 0,
+          igstRateBps: 0,
+        };
+      });
 
       const paymentMode: KharidiPaymentMode = cbKind === 'CASH_BILL' ? 'CASH' : 'CREDIT';
       const created = await onCreateCashCreditBill({
@@ -1117,57 +1253,6 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
         </div>
       </div>
 
-      {/* 4-Column KPI Strip */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="glass-panel rounded-3xl p-5 space-y-1">
-          <div className="text-xs font-medium text-slate-500">
-            Gross Farmer Patti Crop Value
-          </div>
-          <div className="text-2xl font-bold font-mono text-slate-900">
-            {formatINR(totalFarmerGrossPaise, false)}
-          </div>
-          <div className="text-xs text-slate-500 font-mono">
-            {farmerPattis.length} Settled Pattis (SGT-FP)
-          </div>
-        </div>
-
-        <div className="glass-panel rounded-3xl p-5 space-y-1">
-          <div className="text-xs font-medium text-slate-500">
-            Loan Principal + Interest Recovered
-          </div>
-          <div className="text-2xl font-bold font-mono text-emerald-700">
-            {formatINR(totalLoanRecoveredViaPattisPaise, false)}
-          </div>
-          <div className="text-xs text-slate-500">
-            Auto-settled from crop proceeds (AT-08)
-          </div>
-        </div>
-
-        <div className="glass-panel rounded-3xl p-5 space-y-1">
-          <div className="text-xs font-medium text-slate-500">
-            Buyer Kharidi Patti Billing
-          </div>
-          <div className="text-2xl font-bold font-mono text-blue-600">
-            {formatINR(totalKharidiReceivablePaise, false)}
-          </div>
-          <div className="text-xs text-slate-500 font-mono">
-            {kharidiPattis.length} Buyer Bills (SGT-KP)
-          </div>
-        </div>
-
-        <div className="glass-panel rounded-3xl p-5 space-y-1">
-          <div className="text-xs font-medium text-slate-500">
-            Commission & Hamali Earned
-          </div>
-          <div className="text-2xl font-bold font-mono text-slate-900">
-            {formatINR(totalCommissionHamaliEarnedPaise, false)}
-          </div>
-          <div className="text-xs text-slate-500">
-            Posted to Accounts 4002 & 4004
-          </div>
-        </div>
-      </div>
-
       {feedback && (
         <div
           className={`glass-panel rounded-2xl p-4 flex items-center justify-between text-xs ${
@@ -1266,7 +1351,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold text-slate-700">
-                  Crop Lot Line Items (Weight in Quintals · Rate per Quintal)
+                  Crop Lot Line Items (Bags · Weight/Bag kg · Gross Wt Q · Net Wt Q · Rate/Q)
                 </label>
                 <button
                   type="button"
@@ -1276,6 +1361,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                       {
                         commodityId: stockStatuses[0]?.commodity.id ?? '',
                         bags: '',
+                        weightPerBagKg: '0.5',
+                        grossWeightQuintals: '',
                         weightQuintals: '',
                         moisturePct: '0',
                         rateRupees: '',
@@ -1289,123 +1376,211 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
               </div>
 
               {fpLines.map((line, idx) => {
-                const lineGrams = Math.round(Number(line.weightQuintals || 0) * 100_000);
+                const wb = computeLineWeightBreakdown(line);
                 const lineRatePaise = rupeesToPaise(line.rateRupees || '0');
-                const lineGrossPaise = Math.round((lineGrams / 100_000) * lineRatePaise);
+                const lineGrossPaise = Math.round((wb.netWeightGrams / 100_000) * lineRatePaise);
 
                 return (
                   <div
                     key={idx}
-                    className="p-3.5 rounded-2xl bg-white/75 border border-slate-200/80 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end"
+                    className="p-3.5 rounded-2xl bg-white/75 border border-slate-200/80 space-y-2.5"
                   >
-                    <div className="sm:col-span-4">
-                      <label className="block text-[11px] text-slate-500 mb-1">
-                        Commodity
-                      </label>
-                      <select
-                        required
-                        value={line.commodityId}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setFpLines((prev) =>
-                            prev.map((item, i) =>
-                              i === idx ? { ...item, commodityId: val } : item
-                            )
-                          );
-                        }}
-                        className="apple-input w-full text-xs"
-                      >
-                        <option value="">-- Select Commodity --</option>
-                        {stockStatuses.map((s) => (
-                          <option key={s.commodity.id} value={s.commodity.id}>
-                            {s.commodity.nameEn} ({s.commodity.code})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
-                      <input
-                        type="number"
-                        min="1"
-                        required
-                        placeholder="Bags"
-                        value={line.bags}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setFpLines((prev) =>
-                            prev.map((item, i) => (i === idx ? { ...item, bags: val } : item))
-                          );
-                        }}
-                        className="apple-input w-full font-mono text-xs"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="block text-[11px] text-slate-500 mb-1">
-                        Net Weight (Q)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0.01"
-                        required
-                        placeholder="0.00"
-                        value={line.weightQuintals}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setFpLines((prev) =>
-                            prev.map((item, i) =>
-                              i === idx ? { ...item, weightQuintals: val } : item
-                            )
-                          );
-                        }}
-                        className="apple-input w-full font-mono text-xs"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2">
-                      <label className="block text-[11px] text-slate-500 mb-1">
-                        Rate / Q (₹)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="1"
-                        required
-                        placeholder="₹/Q"
-                        value={line.rateRupees}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setFpLines((prev) =>
-                            prev.map((item, i) =>
-                              i === idx ? { ...item, rateRupees: val } : item
-                            )
-                          );
-                        }}
-                        className="apple-input w-full font-mono text-xs"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-2 flex items-center justify-between gap-2 pb-1">
-                      <div className="text-right flex-1">
-                        <div className="text-[10px] text-slate-400">Line Gross</div>
-                        <div className="text-xs font-bold font-mono text-slate-900">
-                          {formatINR(lineGrossPaise, false)}
-                        </div>
-                      </div>
-                      {fpLines.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setFpLines((prev) => prev.filter((_, i) => i !== idx))
-                          }
-                          className="text-slate-400 hover:text-rose-600 p-1"
+                    <div className="grid grid-cols-2 sm:grid-cols-12 gap-2.5 items-end">
+                      <div className="col-span-2 sm:col-span-3">
+                        <label className="block text-[11px] text-slate-500 mb-1">
+                          Commodity
+                        </label>
+                        <select
+                          required
+                          value={line.commodityId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFpLines((prev) =>
+                              prev.map((item, i) =>
+                                i === idx ? { ...item, commodityId: val } : item
+                              )
+                            );
+                          }}
+                          className="apple-input w-full text-xs"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                          <option value="">-- Select Commodity --</option>
+                          {stockStatuses.map((s) => (
+                            <option key={s.commodity.id} value={s.commodity.id}>
+                              {s.commodity.nameEn} ({s.commodity.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-1">
+                        <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
+                        <input
+                          type="number"
+                          min="1"
+                          required
+                          placeholder="Bags"
+                          value={line.bags}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFpLines((prev) =>
+                              prev.map((item, i) => {
+                                if (i !== idx) return item;
+                                const next = { ...item, bags: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(item.grossWeightQuintals || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">
+                          Wt/Bag (kg)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.50"
+                          value={line.weightPerBagKg}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFpLines((prev) =>
+                              prev.map((item, i) => {
+                                if (i !== idx) return item;
+                                const next = { ...item, weightPerBagKg: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(item.grossWeightQuintals || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">
+                          Gross Wt (Q)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Optional"
+                          value={line.grossWeightQuintals}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFpLines((prev) =>
+                              prev.map((item, i) => {
+                                if (i !== idx) return item;
+                                const next = { ...item, grossWeightQuintals: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(val || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">
+                          Net Wt (Q)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          min="0.01"
+                          required
+                          placeholder="0.00"
+                          value={
+                            Number(line.grossWeightQuintals || 0) > 0
+                              ? String(wb.netWeightQuintals)
+                              : line.weightQuintals
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFpLines((prev) =>
+                              prev.map((item, i) =>
+                                i === idx
+                                  ? { ...item, grossWeightQuintals: '', weightQuintals: val }
+                                  : item
+                              )
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">
+                          Rate / Q (₹)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="1"
+                          required
+                          placeholder="₹/Q"
+                          value={line.rateRupees}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setFpLines((prev) =>
+                              prev.map((item, i) =>
+                                i === idx ? { ...item, rateRupees: val } : item
+                              )
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[11px] font-mono text-slate-600">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span>
+                          Bags: <strong>{wb.bags}</strong>
+                        </span>
+                        <span>
+                          Wt/Bag: <strong>{wb.weightPerBagKg.toFixed(2)} kg</strong>
+                        </span>
+                        <span>
+                          Total Bag Wt:{' '}
+                          <strong>
+                            {wb.totalBagWeightKg.toFixed(2)} kg ({wb.totalBagWeightQuintals.toFixed(3)} Q)
+                          </strong>
+                        </span>
+                        <span>
+                          Gross Wt: <strong>{wb.grossWeightQuintals.toFixed(3)} Q</strong>
+                        </span>
+                        <span className="text-emerald-700">
+                          Net Commodity Wt: <strong>{wb.netWeightQuintals.toFixed(3)} Q</strong>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-900">
+                          Line Value: {formatINR(lineGrossPaise, false)}
+                        </span>
+                        {fpLines.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFpLines((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="text-slate-400 hover:text-rose-600 p-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -1681,21 +1856,29 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                   <div className="text-[11px] font-semibold text-slate-500 uppercase">
                     Crop Lots / ಉತ್ಪನ್ನಗಳ ವಿವರ
                   </div>
-                  {selectedFarmerPatti.items.map((it) => (
-                    <div
-                      key={it.id}
-                      className="flex items-center justify-between text-xs font-mono"
-                    >
-                      <span className="font-sans font-medium text-slate-800">
-                        {it.commodityNameEn} ({it.commodityNameKn}) · {it.bags}b ·{' '}
-                        {(it.netWeightGrams / 100_000).toFixed(2)}Q @{' '}
-                        {formatINR(it.ratePerQuintalPaise, false)}
-                      </span>
-                      <span className="font-bold text-slate-900">
-                        {formatINR(it.grossAmountPaise)}
-                      </span>
-                    </div>
-                  ))}
+                  {selectedFarmerPatti.items.map((it) => {
+                    const tareKg = (it.tareWeightGrams || 0) / 1000;
+                    const wtPerBagKg = it.bags > 0 ? tareKg / it.bags : 0;
+                    const grossQ = (it.grossWeightGrams || it.netWeightGrams) / 100_000;
+                    const netQ = it.netWeightGrams / 100_000;
+                    return (
+                      <div key={it.id} className="space-y-0.5 text-xs font-mono">
+                        <div className="flex items-center justify-between">
+                          <span className="font-sans font-medium text-slate-800">
+                            {it.commodityNameEn} ({it.commodityNameKn}) · {it.bags} Bags · Net{' '}
+                            {netQ.toFixed(2)}Q @ {formatINR(it.ratePerQuintalPaise, false)}
+                          </span>
+                          <span className="font-bold text-slate-900">
+                            {formatINR(it.grossAmountPaise)}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          Gross Wt: {grossQ.toFixed(3)}Q · Bag Wt: {tareKg.toFixed(2)}kg (
+                          {wtPerBagKg.toFixed(2)}kg/bag) · Net Commodity Wt: {netQ.toFixed(3)}Q
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 <div className="space-y-1.5 text-xs font-mono">
@@ -1805,10 +1988,17 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                           {formatINR(fp.grossCropAmountPaise, false)}
                         </div>
                       </div>
-                      <div className="text-right font-mono">
+                      <div className="text-right font-mono space-y-0.5">
                         <div className="text-xs font-bold text-emerald-700">
                           Net: {formatINR(fp.netPayablePaise, false)}
                         </div>
+                        {fp.balancePayablePaise > 0 ? (
+                          <div className="text-[10px] font-bold text-orange-600">
+                            Unpaid: {formatINR(fp.balancePayablePaise, false)}
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-slate-400">Settled in Full</div>
+                        )}
                         {fp.carryForwardLoanBalancePaise > 0 && (
                           <div className="text-[10px] text-amber-700">
                             CF Loan: {formatINR(fp.carryForwardLoanBalancePaise, false)}
@@ -1817,6 +2007,351 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                       </div>
                     </button>
                   ))}
+                </div>
+              )}
+            </div>
+
+            {/* Section E: Farmer Settlement Bills — Direct Settlement */}
+            <div className="glass-panel rounded-3xl p-6 space-y-4 border border-orange-200/80">
+              <div className="flex items-center justify-between border-b border-slate-200/70 pb-3">
+                <div>
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-orange-600">
+                    FARMER SETTLEMENT BILLS
+                  </div>
+                  <h3 className="text-sm font-extrabold text-slate-900">
+                    Direct Settlement (ರೈತ ಪಟ್ಟಿ ನೇರ ಸಂದಾಯ)
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Complete settlement after all relevant Farmer Pattis & deductions are finalized
+                  </p>
+                </div>
+                <Receipt className="w-5 h-5 text-orange-500 shrink-0" />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Select Farmer with Finalized Unpaid Pattis
+                </label>
+                <select
+                  value={dsFarmerId}
+                  onChange={(e) => {
+                    const fid = e.target.value;
+                    setDsFarmerId(fid);
+                    const eligible = farmerPattis
+                      .filter((p) => p.farmerId === fid && p.balancePayablePaise > 0)
+                      .map((p) => p.id);
+                    setDsSelectedPattiIds(eligible);
+                    setDsCustomAmountRs('');
+                    setDsReceipt(null);
+                  }}
+                  className="apple-input w-full text-xs"
+                >
+                  <option value="">-- Choose Farmer for Direct Settlement --</option>
+                  {farmers.map((f) => {
+                    const unpaidCount = farmerPattis.filter(
+                      (p) => p.farmerId === f.id && p.balancePayablePaise > 0
+                    ).length;
+                    return (
+                      <option key={f.id} value={f.id}>
+                        {f.name} ({f.partyCode}){' '}
+                        {unpaidCount > 0
+                          ? `— ${unpaidCount} Unpaid Patti(s)`
+                          : '— No Unpaid Pattis'}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {dsFarmerId &&
+                (() => {
+                  const farmerUnpaidPattis = farmerPattis.filter(
+                    (p) => p.farmerId === dsFarmerId && p.balancePayablePaise > 0
+                  );
+                  const chosenPattis = farmerUnpaidPattis.filter((p) =>
+                    dsSelectedPattiIds.includes(p.id)
+                  );
+                  const aggGross = chosenPattis.reduce((s, p) => s + p.grossCropAmountPaise, 0);
+                  const aggComm = chosenPattis.reduce((s, p) => s + p.commissionAmountPaise, 0);
+                  const aggHamali = chosenPattis.reduce((s, p) => s + p.hamaliAmountPaise, 0);
+                  const aggVehicleWeigh = chosenPattis.reduce(
+                    (s, p) => s + p.weighmentFeePaise,
+                    0
+                  );
+                  const aggOther = chosenPattis.reduce(
+                    (s, p) => s + p.mandiFeePaise + p.otherDeductionsPaise,
+                    0
+                  );
+                  const aggLoanP = chosenPattis.reduce(
+                    (s, p) => s + p.loanPrincipalRecoveredPaise,
+                    0
+                  );
+                  const aggLoanI = chosenPattis.reduce(
+                    (s, p) => s + p.loanInterestRecoveredPaise,
+                    0
+                  );
+                  const aggFinalNetPayable = chosenPattis.reduce(
+                    (s, p) => s + p.balancePayablePaise,
+                    0
+                  );
+
+                  if (farmerUnpaidPattis.length === 0) {
+                    return (
+                      <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                        Premature / duplicate settlement prevented: No finalized Farmer Pattis with
+                        unpaid balance exist for this farmer. Finalize a Farmer Patti with
+                        `Keep as Farmer Payable (2001)` first.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-3 text-xs">
+                      <div className="space-y-1.5">
+                        <div className="text-[11px] font-bold text-slate-600">
+                          Finalized Farmer Pattis Included ({chosenPattis.length} /{' '}
+                          {farmerUnpaidPattis.length}):
+                        </div>
+                        {farmerUnpaidPattis.map((fp) => {
+                          const checked = dsSelectedPattiIds.includes(fp.id);
+                          return (
+                            <label
+                              key={fp.id}
+                              className="flex items-center justify-between p-2.5 rounded-xl bg-white/80 border border-slate-200 cursor-pointer"
+                            >
+                              <span className="inline-flex items-center gap-2 font-mono font-semibold text-slate-800">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setDsSelectedPattiIds((prev) => [...prev, fp.id]);
+                                    } else {
+                                      setDsSelectedPattiIds((prev) =>
+                                        prev.filter((id) => id !== fp.id)
+                                      );
+                                    }
+                                  }}
+                                />
+                                <span>
+                                  {fp.pattiNo} ({formatDateDDMMYYYY(fp.pattiDate)})
+                                </span>
+                              </span>
+                              <span className="font-mono font-bold text-orange-600">
+                                {formatINR(fp.balancePayablePaise)}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+
+                      {chosenPattis.length > 0 && (
+                        <>
+                          {/* Breakdown of Crop Value, Each Deduction & Final Net Payable */}
+                          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1.5 font-mono text-xs">
+                            <div className="flex justify-between">
+                              <span className="font-sans text-slate-600">Crop Value (Gross):</span>
+                              <span className="font-bold text-slate-900">
+                                {formatINR(aggGross)}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-rose-700">
+                              <span className="font-sans">Less: Commission:</span>
+                              <span>-{formatINR(aggComm)}</span>
+                            </div>
+                            <div className="flex justify-between text-rose-700">
+                              <span className="font-sans">Less: Hamali:</span>
+                              <span>-{formatINR(aggHamali)}</span>
+                            </div>
+                            <div className="flex justify-between text-rose-700">
+                              <span className="font-sans">Less: Vehicle Rent / Weighment:</span>
+                              <span>-{formatINR(aggVehicleWeigh)}</span>
+                            </div>
+                            <div className="flex justify-between text-rose-700">
+                              <span className="font-sans">Less: Other Approved Deductions:</span>
+                              <span>-{formatINR(aggOther)}</span>
+                            </div>
+                            <div className="flex justify-between text-blue-700">
+                              <span className="font-sans">
+                                Less: Loan Principal & Interest Recovered:
+                              </span>
+                              <span>-{formatINR(aggLoanP + aggLoanI)}</span>
+                            </div>
+                            <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-extrabold text-emerald-800">
+                              <span className="font-sans">Final Net Payable Amount:</span>
+                              <span>{formatINR(aggFinalNetPayable)}</span>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                Settlement Date
+                              </label>
+                              <input
+                                type="date"
+                                value={dsSettlementDate}
+                                onChange={(e) => setDsSettlementDate(e.target.value)}
+                                className="apple-input w-full font-mono text-xs"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                Payment Mode
+                              </label>
+                              <select
+                                value={dsPaymentMode}
+                                onChange={(e) =>
+                                  setDsPaymentMode(e.target.value as 'CASH' | 'BANK')
+                                }
+                                className="apple-input w-full text-xs"
+                              >
+                                <option value="CASH">Cash (1001)</option>
+                                <option value="BANK">Bank (1002)</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                Settlement Amount (₹)
+                              </label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0.01"
+                                placeholder={(aggFinalNetPayable / 100).toFixed(2)}
+                                value={dsCustomAmountRs}
+                                onChange={(e) => setDsCustomAmountRs(e.target.value)}
+                                className="apple-input w-full font-mono text-xs"
+                              />
+                            </div>
+                          </div>
+
+                          {dsPaymentMode === 'BANK' && (
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                                Disbursing Bank Account
+                              </label>
+                              <select
+                                value={dsBankAccountId}
+                                onChange={(e) => setDsBankAccountId(e.target.value)}
+                                className="apple-input w-full text-xs"
+                              >
+                                {bankAccounts.map((b) => (
+                                  <option key={b.id} value={b.id}>
+                                    {b.accountLabel} ({b.accountNumberMasked})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            disabled={!canCreateBills || dsSubmitting || !onDirectSettleFarmerPattis}
+                            onClick={async () => {
+                              if (!onDirectSettleFarmerPattis || dsSubmitting) return;
+                              setDsSubmitting(true);
+                              setFeedback(null);
+                              try {
+                                const amtPaise = dsCustomAmountRs.trim()
+                                  ? rupeesToPaise(dsCustomAmountRs)
+                                  : aggFinalNetPayable;
+                                const receipt = await onDirectSettleFarmerPattis({
+                                  farmerId: dsFarmerId,
+                                  pattiIds: chosenPattis.map((p) => p.id),
+                                  settlementDate: dsSettlementDate,
+                                  settlementAmountPaise: amtPaise,
+                                  paymentMode: dsPaymentMode,
+                                  bankAccountId:
+                                    dsPaymentMode === 'BANK'
+                                      ? dsBankAccountId || bankAccounts[0]?.id || null
+                                      : null,
+                                  notes: dsNotes.trim() || 'Direct Settlement of Farmer Patti(s)',
+                                });
+                                setDsReceipt(receipt);
+                                setDsSelectedPattiIds([]);
+                                setDsCustomAmountRs('');
+                                setFeedback({
+                                  type: 'success',
+                                  message: `Direct Settlement completed (${receipt.receiptNo}): ${formatINR(receipt.settlementAmountPaidPaise)} paid via ${receipt.paymentMode}.`,
+                                });
+                              } catch (err) {
+                                setFeedback({
+                                  type: 'error',
+                                  message:
+                                    err instanceof Error
+                                      ? err.message
+                                      : 'Failed to complete Direct Settlement',
+                                });
+                              } finally {
+                                setDsSubmitting(false);
+                              }
+                            }}
+                            className="w-full py-2.5 px-4 rounded-xl bg-orange-500 hover:bg-orange-600 text-white text-xs font-extrabold disabled:opacity-40 transition-all cursor-pointer"
+                          >
+                            {dsSubmitting
+                              ? 'Completing Settlement...'
+                              : `Complete Direct Settlement (${formatINR(
+                                  dsCustomAmountRs.trim()
+                                    ? rupeesToPaise(dsCustomAmountRs)
+                                    : aggFinalNetPayable
+                                )})`}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
+
+              {/* Printable Direct Settlement Receipt */}
+              {dsReceipt && (
+                <div className="p-4 rounded-2xl bg-emerald-50/90 border border-emerald-300 space-y-2 text-xs">
+                  <div className="flex items-center justify-between border-b border-emerald-200 pb-2">
+                    <div>
+                      <div className="font-mono font-extrabold text-emerald-900">
+                        SETTLEMENT RECEIPT · {dsReceipt.receiptNo}
+                      </div>
+                      <div className="text-[11px] text-emerald-800">
+                        Farmer: {dsReceipt.farmerName} ({dsReceipt.farmerCode}) · Date:{' '}
+                        {formatDateDDMMYYYY(dsReceipt.settlementDate)}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="px-2.5 py-1 rounded-lg bg-white border border-emerald-300 text-emerald-900 font-bold inline-flex items-center gap-1"
+                    >
+                      <Printer className="w-3.5 h-3.5" /> Print Receipt
+                    </button>
+                  </div>
+                  <div className="font-mono space-y-1 text-[11px] text-emerald-950">
+                    <div className="flex justify-between">
+                      <span>Pattis Settled:</span>
+                      <span className="font-bold">{dsReceipt.pattiNumbers.join(', ')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Gross Crop Value:</span>
+                      <span>{formatINR(dsReceipt.grossCropValuePaise)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Total Deductions + Loan Recovery:</span>
+                      <span>
+                        -
+                        {formatINR(
+                          dsReceipt.commissionDeductionPaise +
+                            dsReceipt.hamaliDeductionPaise +
+                            dsReceipt.vehicleRentAndWeighmentPaise +
+                            dsReceipt.mandiAndOtherDeductionsPaise +
+                            dsReceipt.loanPrincipalRecoveredPaise +
+                            dsReceipt.loanInterestRecoveredPaise
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex justify-between font-bold text-emerald-900 pt-1 border-t border-emerald-200">
+                      <span>Paid Now ({dsReceipt.paymentMode}):</span>
+                      <span>{formatINR(dsReceipt.settlementAmountPaidPaise)}</span>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -1893,7 +2428,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold text-slate-700">
-                  Kharidi Patti Line Items (Explicit GST Toggle per Line · DR-04)
+                  Kharidi Patti Line Items (Bags · Wt/Bag kg · Gross Wt Q · Net Wt Q · Explicit GST · DR-04)
                 </label>
                 <button
                   type="button"
@@ -1903,6 +2438,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                       {
                         commodityId: stockStatuses[0]?.commodity.id ?? '',
                         bags: '',
+                        weightPerBagKg: '0.5',
+                        grossWeightQuintals: '',
                         weightQuintals: '',
                         rateRupees: '',
                         gstApplicable: false,
@@ -1917,116 +2454,222 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                 </button>
               </div>
 
-              {kpLines.map((line, idx) => (
-                <div
-                  key={idx}
-                  className="p-3.5 rounded-2xl bg-white/75 border border-slate-200/80 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end"
-                >
-                  <div className="sm:col-span-4">
-                    <label className="block text-[11px] text-slate-500 mb-1">Commodity</label>
-                    <select
-                      required
-                      value={line.commodityId}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setKpLines((prev) =>
-                          prev.map((item, i) =>
-                            i === idx ? { ...item, commodityId: val } : item
-                          )
-                        );
-                      }}
-                      className="apple-input w-full text-xs"
-                    >
-                      <option value="">-- Select Commodity --</option>
-                      {stockStatuses.map((s) => (
-                        <option key={s.commodity.id} value={s.commodity.id}>
-                          {s.commodity.nameEn} ({s.commodity.code})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+              {kpLines.map((line, idx) => {
+                const wb = computeLineWeightBreakdown(line);
+                const lineRatePaise = rupeesToPaise(line.rateRupees || '0');
+                const lineBasePaise = Math.round((wb.netWeightGrams / 100_000) * lineRatePaise);
+                return (
+                  <div
+                    key={idx}
+                    className="p-3.5 rounded-2xl bg-white/75 border border-slate-200/80 space-y-2.5"
+                  >
+                    <div className="grid grid-cols-2 sm:grid-cols-12 gap-2.5 items-end">
+                      <div className="col-span-2 sm:col-span-3">
+                        <label className="block text-[11px] text-slate-500 mb-1">Commodity</label>
+                        <select
+                          required
+                          value={line.commodityId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setKpLines((prev) =>
+                              prev.map((item, i) =>
+                                i === idx ? { ...item, commodityId: val } : item
+                              )
+                            );
+                          }}
+                          className="apple-input w-full text-xs"
+                        >
+                          <option value="">-- Select Commodity --</option>
+                          {stockStatuses.map((s) => (
+                            <option key={s.commodity.id} value={s.commodity.id}>
+                              {s.commodity.nameEn} ({s.commodity.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      value={line.bags}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setKpLines((prev) =>
-                          prev.map((item, i) => (i === idx ? { ...item, bags: val } : item))
-                        );
-                      }}
-                      className="apple-input w-full font-mono text-xs"
-                    />
-                  </div>
+                      <div className="sm:col-span-1">
+                        <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
+                        <input
+                          type="number"
+                          min="1"
+                          required
+                          value={line.bags}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setKpLines((prev) =>
+                              prev.map((item, i) => {
+                                if (i !== idx) return item;
+                                const next = { ...item, bags: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(item.grossWeightQuintals || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
 
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] text-slate-500 mb-1">
-                      Net Weight (Q)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      required
-                      value={line.weightQuintals}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setKpLines((prev) =>
-                          prev.map((item, i) =>
-                            i === idx ? { ...item, weightQuintals: val } : item
-                          )
-                        );
-                      }}
-                      className="apple-input w-full font-mono text-xs"
-                    />
-                  </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">Wt/Bag (kg)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.50"
+                          value={line.weightPerBagKg}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setKpLines((prev) =>
+                              prev.map((item, i) => {
+                                if (i !== idx) return item;
+                                const next = { ...item, weightPerBagKg: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(item.grossWeightQuintals || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
 
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] text-slate-500 mb-1">
-                      Rate / Q (₹)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="1"
-                      required
-                      value={line.rateRupees}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setKpLines((prev) =>
-                          prev.map((item, i) =>
-                            i === idx ? { ...item, rateRupees: val } : item
-                          )
-                        );
-                      }}
-                      className="apple-input w-full font-mono text-xs"
-                    />
-                  </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">Gross Wt (Q)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Optional"
+                          value={line.grossWeightQuintals}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setKpLines((prev) =>
+                              prev.map((item, i) => {
+                                if (i !== idx) return item;
+                                const next = { ...item, grossWeightQuintals: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(val || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
 
-                  <div className="sm:col-span-2 flex items-center justify-between pb-1">
-                    <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={line.gstApplicable}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setKpLines((prev) =>
-                            prev.map((item, i) =>
-                              i === idx ? { ...item, gstApplicable: checked } : item
-                            )
-                          );
-                        }}
-                        className="rounded border-slate-300 text-blue-600"
-                      />
-                      <span>5% GST</span>
-                    </label>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">
+                          Net Wt (Q)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          min="0.01"
+                          required
+                          value={
+                            Number(line.grossWeightQuintals || 0) > 0
+                              ? String(wb.netWeightQuintals)
+                              : line.weightQuintals
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setKpLines((prev) =>
+                              prev.map((item, i) =>
+                                i === idx
+                                  ? { ...item, grossWeightQuintals: '', weightQuintals: val }
+                                  : item
+                              )
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">
+                          Rate / Q (₹)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="1"
+                          required
+                          value={line.rateRupees}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setKpLines((prev) =>
+                              prev.map((item, i) =>
+                                i === idx ? { ...item, rateRupees: val } : item
+                              )
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[11px] font-mono text-slate-600">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span>
+                          Bags: <strong>{wb.bags}</strong>
+                        </span>
+                        <span>
+                          Wt/Bag: <strong>{wb.weightPerBagKg.toFixed(2)} kg</strong>
+                        </span>
+                        <span>
+                          Total Bag Wt:{' '}
+                          <strong>
+                            {wb.totalBagWeightKg.toFixed(2)} kg ({wb.totalBagWeightQuintals.toFixed(3)} Q)
+                          </strong>
+                        </span>
+                        <span>
+                          Gross Wt: <strong>{wb.grossWeightQuintals.toFixed(3)} Q</strong>
+                        </span>
+                        <span className="text-blue-700">
+                          Net Commodity Wt: <strong>{wb.netWeightQuintals.toFixed(3)} Q</strong>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={line.gstApplicable}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setKpLines((prev) =>
+                                prev.map((item, i) =>
+                                  i === idx ? { ...item, gstApplicable: checked } : item
+                                )
+                              );
+                            }}
+                            className="rounded border-slate-300 text-blue-600"
+                          />
+                          <span>5% GST</span>
+                        </label>
+                        <span className="text-xs font-bold text-slate-900">
+                          {formatINR(lineBasePaise, false)}
+                        </span>
+                        {kpLines.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setKpLines((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="text-slate-400 hover:text-rose-600 p-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-200/70">
@@ -2140,15 +2783,26 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                 </div>
 
                 <div className="space-y-1.5 text-xs font-mono">
-                  {selectedKharidiPatti.items.map((it) => (
-                    <div key={it.id} className="flex justify-between">
-                      <span className="font-sans">
-                        {it.commodityNameEn} · {it.bags}b ·{' '}
-                        {(it.netWeightGrams / 100_000).toFixed(2)}Q
-                      </span>
-                      <span>{formatINR(it.baseAmountPaise)}</span>
-                    </div>
-                  ))}
+                  {selectedKharidiPatti.items.map((it) => {
+                    const tareKg = (it.tareWeightGrams || 0) / 1000;
+                    const wtPerBagKg = it.bags > 0 ? tareKg / it.bags : 0;
+                    const grossQ = (it.grossWeightGrams || it.netWeightGrams) / 100_000;
+                    const netQ = it.netWeightGrams / 100_000;
+                    return (
+                      <div key={it.id} className="space-y-0.5">
+                        <div className="flex justify-between">
+                          <span className="font-sans">
+                            {it.commodityNameEn} · {it.bags} Bags · Net {netQ.toFixed(2)}Q
+                          </span>
+                          <span>{formatINR(it.baseAmountPaise)}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          Gross Wt: {grossQ.toFixed(3)}Q · Bag Wt: {tareKg.toFixed(2)}kg (
+                          {wtPerBagKg.toFixed(2)}kg/bag) · Net Commodity Wt: {netQ.toFixed(3)}Q
+                        </div>
+                      </div>
+                    );
+                  })}
                   <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold text-blue-700">
                     <span className="font-sans">Net Receivable Total:</span>
                     <span>{formatINR(selectedKharidiPatti.netReceivablePaise)}</span>
@@ -2246,26 +2900,28 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
-                  Farmer (ರೈತರು) {dalaliSubMode === 'VIKRI' ? '*' : '(Linked)'}
-                </label>
-                <select
-                  required={dalaliSubMode === 'VIKRI'}
-                  value={dvFarmerId}
-                  onChange={(e) => setDvFarmerId(e.target.value)}
-                  className="apple-input w-full text-xs"
-                >
-                  <option value="">-- Select Farmer --</option>
-                  {farmers.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.name} ({f.partyCode})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {dalaliSubMode === 'VIKRI' && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Farmer (ರೈತರು) *
+                  </label>
+                  <select
+                    required
+                    value={dvFarmerId}
+                    onChange={(e) => setDvFarmerId(e.target.value)}
+                    className="apple-input w-full text-xs"
+                  >
+                    <option value="">-- Select Farmer --</option>
+                    {farmers.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name} ({f.partyCode})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-              <div>
+              <div className={dalaliSubMode === 'KHARIDI' ? 'sm:col-span-2' : ''}>
                 <label className="block text-xs font-medium text-slate-600 mb-1">
                   Buyer (ಖರೀದಿದಾರರು) {dalaliSubMode === 'KHARIDI' ? '*' : '(Counterparty)'}
                 </label>
@@ -2315,7 +2971,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold text-slate-700">
-                  Dalali Agency Lots (Includes {settings.customLabels.andigesLabelEn} & Non-Auto GST)
+                  Dalali Agency Lots (Bags · Wt/Bag kg · Gross Wt Q · Net Wt Q ·{' '}
+                  {settings.customLabels.andigesLabelEn} & Non-Auto GST)
                 </label>
                 <button
                   type="button"
@@ -2325,6 +2982,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                       {
                         commodityId: stockStatuses[0]?.commodity.id ?? '',
                         bags: '',
+                        weightPerBagKg: '0.5',
+                        grossWeightQuintals: '',
                         andiges: '1',
                         weightQuintals: '',
                         rateRupees: '',
@@ -2340,126 +2999,231 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                 </button>
               </div>
 
-              {dvLines.map((line, idx) => (
-                <div
-                  key={idx}
-                  className="p-3.5 rounded-2xl bg-white/75 border border-slate-200/80 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end"
-                >
-                  <div className="sm:col-span-3">
-                    <label className="block text-[11px] text-slate-500 mb-1">Commodity</label>
-                    <select
-                      required
-                      value={line.commodityId}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setDvLines((prev) =>
-                          prev.map((it, i) => (i === idx ? { ...it, commodityId: val } : it))
-                        );
-                      }}
-                      className="apple-input w-full text-xs"
-                    >
-                      <option value="">-- Select --</option>
-                      {stockStatuses.map((s) => (
-                        <option key={s.commodity.id} value={s.commodity.id}>
-                          {s.commodity.nameEn} ({s.commodity.code})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      value={line.bags}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setDvLines((prev) =>
-                          prev.map((it, i) => (i === idx ? { ...it, bags: val } : it))
-                        );
-                      }}
-                      className="apple-input w-full font-mono text-xs"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] text-slate-500 mb-1">
-                      {settings.customLabels.andigesLabelEn}
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={line.andiges}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setDvLines((prev) =>
-                          prev.map((it, i) => (i === idx ? { ...it, andiges: val } : it))
-                        );
-                      }}
-                      className="apple-input w-full font-mono text-xs"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] text-slate-500 mb-1">Weight (Q)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      required
-                      value={line.weightQuintals}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setDvLines((prev) =>
-                          prev.map((it, i) => (i === idx ? { ...it, weightQuintals: val } : it))
-                        );
-                      }}
-                      className="apple-input w-full font-mono text-xs"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] text-slate-500 mb-1">Rate / Q (₹)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="1"
-                      required
-                      value={line.rateRupees}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setDvLines((prev) =>
-                          prev.map((it, i) => (i === idx ? { ...it, rateRupees: val } : it))
-                        );
-                      }}
-                      className="apple-input w-full font-mono text-xs"
-                    />
-                  </div>
-
-                  <div className="sm:col-span-1 flex items-center pb-1">
-                    {dalaliSubMode === 'KHARIDI' && (
-                      <label className="inline-flex items-center gap-1 text-[11px] text-slate-700 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={line.gstApplicable}
+              {dvLines.map((line, idx) => {
+                const wb = computeLineWeightBreakdown(line);
+                const lineRatePaise = rupeesToPaise(line.rateRupees || '0');
+                const lineBasePaise = Math.round((wb.netWeightGrams / 100_000) * lineRatePaise);
+                return (
+                  <div
+                    key={idx}
+                    className="p-3.5 rounded-2xl bg-white/75 border border-slate-200/80 space-y-2.5"
+                  >
+                    <div className="grid grid-cols-2 sm:grid-cols-12 gap-2.5 items-end">
+                      <div className="col-span-2 sm:col-span-3">
+                        <label className="block text-[11px] text-slate-500 mb-1">Commodity</label>
+                        <select
+                          required
+                          value={line.commodityId}
                           onChange={(e) => {
-                            const checked = e.target.checked;
+                            const val = e.target.value;
+                            setDvLines((prev) =>
+                              prev.map((it, i) => (i === idx ? { ...it, commodityId: val } : it))
+                            );
+                          }}
+                          className="apple-input w-full text-xs"
+                        >
+                          <option value="">-- Select --</option>
+                          {stockStatuses.map((s) => (
+                            <option key={s.commodity.id} value={s.commodity.id}>
+                              {s.commodity.nameEn} ({s.commodity.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-1">
+                        <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
+                        <input
+                          type="number"
+                          min="1"
+                          required
+                          value={line.bags}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setDvLines((prev) =>
+                              prev.map((it, i) => {
+                                if (i !== idx) return it;
+                                const next = { ...it, bags: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(it.grossWeightQuintals || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">Wt/Bag (kg)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.50"
+                          value={line.weightPerBagKg}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setDvLines((prev) =>
+                              prev.map((it, i) => {
+                                if (i !== idx) return it;
+                                const next = { ...it, weightPerBagKg: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(it.grossWeightQuintals || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">Gross Wt (Q)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Optional"
+                          value={line.grossWeightQuintals}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setDvLines((prev) =>
+                              prev.map((it, i) => {
+                                if (i !== idx) return it;
+                                const next = { ...it, grossWeightQuintals: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(val || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">Net Wt (Q)</label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          min="0.01"
+                          required
+                          value={
+                            Number(line.grossWeightQuintals || 0) > 0
+                              ? String(wb.netWeightQuintals)
+                              : line.weightQuintals
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value;
                             setDvLines((prev) =>
                               prev.map((it, i) =>
-                                i === idx ? { ...it, gstApplicable: checked } : it
+                                i === idx
+                                  ? { ...it, grossWeightQuintals: '', weightQuintals: val }
+                                  : it
                               )
                             );
                           }}
-                          className="rounded border-slate-300 text-blue-600"
+                          className="apple-input w-full font-mono text-xs"
                         />
-                        <span>GST</span>
-                      </label>
-                    )}
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">Rate / Q (₹)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="1"
+                          required
+                          value={line.rateRupees}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setDvLines((prev) =>
+                              prev.map((it, i) => (i === idx ? { ...it, rateRupees: val } : it))
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[11px] font-mono text-slate-600">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span>
+                          Bags: <strong>{wb.bags}</strong>
+                        </span>
+                        <span>
+                          Wt/Bag: <strong>{wb.weightPerBagKg.toFixed(2)} kg</strong>
+                        </span>
+                        <span>
+                          Total Bag Wt:{' '}
+                          <strong>
+                            {wb.totalBagWeightKg.toFixed(2)} kg ({wb.totalBagWeightQuintals.toFixed(3)} Q)
+                          </strong>
+                        </span>
+                        <span>
+                          Gross Wt: <strong>{wb.grossWeightQuintals.toFixed(3)} Q</strong>
+                        </span>
+                        <span className="text-emerald-700">
+                          Net Commodity Wt: <strong>{wb.netWeightQuintals.toFixed(3)} Q</strong>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="inline-flex items-center gap-1 text-[11px] text-slate-600">
+                          <span>{settings.customLabels.andigesLabelEn}:</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={line.andiges}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setDvLines((prev) =>
+                                prev.map((it, i) => (i === idx ? { ...it, andiges: val } : it))
+                              );
+                            }}
+                            className="apple-input w-14 py-0.5 px-1.5 font-mono text-xs"
+                          />
+                        </label>
+                        {dalaliSubMode === 'KHARIDI' && (
+                          <label className="inline-flex items-center gap-1 text-[11px] text-slate-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={line.gstApplicable}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setDvLines((prev) =>
+                                  prev.map((it, i) =>
+                                    i === idx ? { ...it, gstApplicable: checked } : it
+                                  )
+                                );
+                              }}
+                              className="rounded border-slate-300 text-blue-600"
+                            />
+                            <span>GST</span>
+                          </label>
+                        )}
+                        <span className="text-xs font-bold text-slate-900">
+                          {formatINR(lineBasePaise, false)}
+                        </span>
+                        {dvLines.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDvLines((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="text-slate-400 hover:text-rose-600 p-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Configurable DR-06 Mandi Deductions & Charges */}
@@ -2476,6 +3240,9 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                   onChange={(e) => setDvCommPct(e.target.value)}
                   className="apple-input w-full font-mono text-xs"
                 />
+                <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                  ={formatINR(dalaliPreview.commissionAmountPaise, false)}
+                </div>
               </div>
 
               <div>
@@ -2506,28 +3273,37 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
 
               <div>
                 <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  {settings.customLabels.tukadFeeLabelEn} (₹)
+                  {settings.customLabels.tukadFeeLabelEn} / Bag (₹)
                 </label>
                 <input
                   type="number"
+                  step="0.5"
                   min="0"
-                  value={dvTukadRupees}
-                  onChange={(e) => setDvTukadRupees(e.target.value)}
+                  value={dvTukadPerBagRupees}
+                  onChange={(e) => setDvTukadPerBagRupees(e.target.value)}
                   className="apple-input w-full font-mono text-xs"
                 />
+                <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                  {dalaliPreview.totalBags}b × ₹{dvTukadPerBagRupees || '0'} ={' '}
+                  {formatINR(dalaliPreview.tukadFeePaise, false)}
+                </div>
               </div>
 
               <div>
                 <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  {settings.customLabels.rmcFeeLabelEn} (₹)
+                  {settings.customLabels.rmcFeeLabelEn} (%)
                 </label>
                 <input
                   type="number"
+                  step="0.01"
                   min="0"
-                  value={dvRmcRupees}
-                  onChange={(e) => setDvRmcRupees(e.target.value)}
+                  value={dvRmcPct}
+                  onChange={(e) => setDvRmcPct(e.target.value)}
                   className="apple-input w-full font-mono text-xs"
                 />
+                <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                  RMC: {formatINR(dalaliPreview.rmcFeePaise, false)}
+                </div>
               </div>
 
               <div>
@@ -2577,8 +3353,209 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
             </div>
           </form>
 
-          {/* Right 5 Columns: Dalali Registers */}
+          {/* Right 5 Columns: Dalali Printable Patti & Registers */}
           <div className="lg:col-span-5 space-y-6">
+            {dalaliSubMode === 'VIKRI' && selectedDalaliVikri && (
+              <div className="glass-panel rounded-3xl p-6 space-y-4 border border-emerald-200/80">
+                <div className="flex items-center justify-between border-b border-slate-200/70 pb-3">
+                  <div>
+                    <div className="text-[11px] font-mono text-emerald-700 font-semibold">
+                      DALALI VIKRI PATTI · {selectedDalaliVikri.pattiNo} · Class{' '}
+                      {selectedDalaliVikri.classSerial || 'A'}
+                    </div>
+                    <h3 className="text-base font-bold text-slate-900">
+                      {settings.legalName || 'Shree Guru Traders'} · ದಲಾಲಿ ವಿಕ್ರಿ ಪಟ್ಟಿ
+                    </h3>
+                    <div className="text-[11px] text-slate-500">
+                      Farmer: {selectedDalaliVikri.farmerName} ({selectedDalaliVikri.farmerCode}) ·
+                      Date: {formatDateDDMMYYYY(selectedDalaliVikri.pattiDate)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1.5"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                    Print
+                  </button>
+                </div>
+
+                <div className="space-y-1.5 text-xs font-mono">
+                  {selectedDalaliVikri.items.map((it) => {
+                    const tareKg = (it.tareWeightGrams || 0) / 1000;
+                    const wtPerBagKg = it.bags > 0 ? tareKg / it.bags : 0;
+                    const grossQ = (it.grossWeightGrams || it.netWeightGrams) / 100_000;
+                    const netQ = it.netWeightGrams / 100_000;
+                    return (
+                      <div key={it.id} className="space-y-0.5 border-b border-slate-100 pb-1.5">
+                        <div className="flex justify-between">
+                          <span className="font-sans font-medium text-slate-800">
+                            {it.commodityNameEn} · {it.bags} Bags ({it.andiges}{' '}
+                            {settings.customLabels.andigesLabelEn}) · Net {netQ.toFixed(2)}Q @{' '}
+                            {formatINR(it.ratePerQuintalPaise, false)}
+                          </span>
+                          <span className="font-bold">{formatINR(it.grossAmountPaise)}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          Gross Wt: {grossQ.toFixed(3)}Q · Bag Wt: {tareKg.toFixed(2)}kg (
+                          {wtPerBagKg.toFixed(2)}kg/bag) · Net Commodity Wt: {netQ.toFixed(3)}Q
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div className="flex justify-between pt-1">
+                    <span className="font-sans text-slate-600">Gross Sale Value:</span>
+                    <span className="font-bold">
+                      {formatINR(selectedDalaliVikri.grossSaleAmountPaise)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-rose-700">
+                    <span className="font-sans">
+                      Commission ({(selectedDalaliVikri.commissionRateBps / 100).toFixed(2)}%):
+                    </span>
+                    <span>-{formatINR(selectedDalaliVikri.commissionAmountPaise)}</span>
+                  </div>
+                  <div className="flex justify-between text-rose-700">
+                    <span className="font-sans">Hamali:</span>
+                    <span>-{formatINR(selectedDalaliVikri.hamaliAmountPaise)}</span>
+                  </div>
+                  <div className="flex justify-between text-rose-700">
+                    <span className="font-sans">{settings.customLabels.tukadFeeLabelEn}:</span>
+                    <span>-{formatINR(selectedDalaliVikri.tukadFeePaise)}</span>
+                  </div>
+                  <div className="flex justify-between text-rose-700">
+                    <span className="font-sans">{settings.customLabels.rmcFeeLabelEn}:</span>
+                    <span>-{formatINR(selectedDalaliVikri.rmcFeePaise)}</span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold text-emerald-800">
+                    <span className="font-sans">Net Vikri Payable:</span>
+                    <span>{formatINR(selectedDalaliVikri.netPayablePaise)}</span>
+                  </div>
+                </div>
+
+                {/* Signature Area */}
+                <div className="pt-6 border-t border-dashed border-slate-300 grid grid-cols-2 gap-4 text-[11px] text-slate-600">
+                  <div>
+                    <div className="h-8 border-b border-slate-300 mb-1" />
+                    <div className="font-semibold">ರೈತರ ಸಹಿ / Farmer Signature</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="h-8 border-b border-slate-300 mb-1" />
+                    <div className="font-semibold">
+                      ದಲ್ಲಾಳಿ ಸಹಿ / For {settings.legalName || 'Shree Guru Traders'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {dalaliSubMode === 'KHARIDI' && selectedDalaliKharidi && (
+              <div className="glass-panel rounded-3xl p-6 space-y-4 border border-blue-200/80">
+                <div className="flex items-center justify-between border-b border-slate-200/70 pb-3">
+                  <div>
+                    <div className="text-[11px] font-mono text-blue-600 font-semibold">
+                      DALALI KHARIDI PATTI · {selectedDalaliKharidi.pattiNo} · Class{' '}
+                      {selectedDalaliKharidi.classSerial || 'A'}
+                    </div>
+                    <h3 className="text-base font-bold text-slate-900">
+                      {settings.legalName || 'Shree Guru Traders'} · ದಲಾಲಿ ಖರೀದಿ ಪಟ್ಟಿ
+                    </h3>
+                    <div className="text-[11px] text-slate-500">
+                      Buyer: {selectedDalaliKharidi.buyerName} ({selectedDalaliKharidi.buyerCode}) ·
+                      Date: {formatDateDDMMYYYY(selectedDalaliKharidi.pattiDate)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1.5"
+                  >
+                    <Printer className="w-3.5 h-3.5 text-blue-600" />
+                    Print
+                  </button>
+                </div>
+
+                <div className="space-y-1.5 text-xs font-mono">
+                  {selectedDalaliKharidi.items.map((it) => {
+                    const tareKg = (it.tareWeightGrams || 0) / 1000;
+                    const wtPerBagKg = it.bags > 0 ? tareKg / it.bags : 0;
+                    const grossQ = (it.grossWeightGrams || it.netWeightGrams) / 100_000;
+                    const netQ = it.netWeightGrams / 100_000;
+                    return (
+                      <div key={it.id} className="space-y-0.5 border-b border-slate-100 pb-1.5">
+                        <div className="flex justify-between">
+                          <span className="font-sans font-medium text-slate-800">
+                            {it.commodityNameEn} · {it.bags} Bags ({it.andiges}{' '}
+                            {settings.customLabels.andigesLabelEn}) · Net {netQ.toFixed(2)}Q @{' '}
+                            {formatINR(it.ratePerQuintalPaise, false)}
+                          </span>
+                          <span className="font-bold">{formatINR(it.baseAmountPaise)}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          Gross Wt: {grossQ.toFixed(3)}Q · Bag Wt: {tareKg.toFixed(2)}kg (
+                          {wtPerBagKg.toFixed(2)}kg/bag) · Net Commodity Wt: {netQ.toFixed(3)}Q
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div className="flex justify-between pt-1">
+                    <span className="font-sans text-slate-600">Base Commodity Amount:</span>
+                    <span className="font-bold">
+                      {formatINR(selectedDalaliKharidi.totalBaseAmountPaise)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-600">
+                    <span className="font-sans">
+                      Commission ({(selectedDalaliKharidi.commissionRateBps / 100).toFixed(2)}%):
+                    </span>
+                    <span>+{formatINR(selectedDalaliKharidi.commissionAmountPaise)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-600">
+                    <span className="font-sans">Hamali:</span>
+                    <span>+{formatINR(selectedDalaliKharidi.hamaliAmountPaise)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-600">
+                    <span className="font-sans">
+                      {settings.customLabels.tukadFeeLabelEn} ({selectedDalaliKharidi.totalBags}{' '}
+                      bags):
+                    </span>
+                    <span>+{formatINR(selectedDalaliKharidi.tukadFeePaise)}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-600">
+                    <span className="font-sans">{settings.customLabels.rmcFeeLabelEn}:</span>
+                    <span>+{formatINR(selectedDalaliKharidi.rmcFeePaise)}</span>
+                  </div>
+                  {selectedDalaliKharidi.totalGstPaise > 0 && (
+                    <div className="flex justify-between text-slate-600">
+                      <span className="font-sans">Explicit GST:</span>
+                      <span>+{formatINR(selectedDalaliKharidi.totalGstPaise)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between pt-2 border-t border-slate-200 text-sm font-bold text-blue-700">
+                    <span className="font-sans">Net Kharidi Receivable:</span>
+                    <span>{formatINR(selectedDalaliKharidi.netReceivablePaise)}</span>
+                  </div>
+                </div>
+
+                {/* Signature Area */}
+                <div className="pt-6 border-t border-dashed border-slate-300 grid grid-cols-2 gap-4 text-[11px] text-slate-600">
+                  <div>
+                    <div className="h-8 border-b border-slate-300 mb-1" />
+                    <div className="font-semibold">ಖರೀದಿದಾರರ ಸಹಿ / Buyer Signature</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="h-8 border-b border-slate-300 mb-1" />
+                    <div className="font-semibold">
+                      ಮಾರಾಟಗಾರರ / ದಲ್ಲಾಳಿ ಸಹಿ / For {settings.legalName || 'Shree Guru Traders'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="glass-panel rounded-3xl p-6 space-y-3">
               <h3 className="text-sm font-bold text-slate-900">
                 Dalali Vikri Pattis ({dalaliVikriPattis.length}) · SGT-DV
@@ -2590,9 +3567,18 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
               ) : (
                 <div className="space-y-2 max-h-56 overflow-y-auto">
                   {dalaliVikriPattis.map((dv) => (
-                    <div
+                    <button
                       key={dv.id}
-                      className="p-3 rounded-2xl bg-white/80 border border-slate-200/80 flex items-center justify-between text-xs font-mono"
+                      type="button"
+                      onClick={() => {
+                        setDalaliSubMode('VIKRI');
+                        setSelectedDalaliVikri(dv);
+                      }}
+                      className={`w-full text-left p-3 rounded-2xl border flex items-center justify-between text-xs font-mono transition-all ${
+                        selectedDalaliVikri?.id === dv.id
+                          ? 'bg-emerald-50/80 border-emerald-300'
+                          : 'bg-white/80 border-slate-200/80 hover:bg-white'
+                      }`}
                     >
                       <div>
                         <div className="font-bold text-slate-900">
@@ -2606,7 +3592,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                       <div className="text-right font-bold text-emerald-700">
                         {formatINR(dv.netPayablePaise, false)}
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -2623,9 +3609,18 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
               ) : (
                 <div className="space-y-2 max-h-56 overflow-y-auto">
                   {dalaliKharidiPattis.map((dk) => (
-                    <div
+                    <button
                       key={dk.id}
-                      className="p-3 rounded-2xl bg-white/80 border border-slate-200/80 flex items-center justify-between text-xs font-mono"
+                      type="button"
+                      onClick={() => {
+                        setDalaliSubMode('KHARIDI');
+                        setSelectedDalaliKharidi(dk);
+                      }}
+                      className={`w-full text-left p-3 rounded-2xl border flex items-center justify-between text-xs font-mono transition-all ${
+                        selectedDalaliKharidi?.id === dk.id
+                          ? 'bg-blue-50/80 border-blue-300'
+                          : 'bg-white/80 border-slate-200/80 hover:bg-white'
+                      }`}
                     >
                       <div>
                         <div className="font-bold text-slate-900">
@@ -2638,7 +3633,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                       <div className="text-right font-bold text-blue-700">
                         {formatINR(dk.netReceivablePaise, false)}
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               )}
@@ -2646,7 +3641,562 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
           </div>
         </div>
       ) : (
-        /* Chunk 6: Cash / Credit Bill & Controlled Credit Note Reversal (SRS Sec 9.1, 9.2 & 17.3) */
+        /* Chunk 6 & Section H/I: Cash / Credit Bill & Separate Kharidi Patti Section */
+        <div className="space-y-6">
+          {/* Sub-section Switcher inside Cash / Credit Bill Module */}
+          <div className="glass-panel rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-extrabold text-slate-900">
+                Cash / Credit Bill & Separate Kharidi Patti Document Selection
+              </div>
+              <div className="text-[11px] text-slate-500">
+                Switch between Commercial Cash/Credit Invoice (`SGT-CB`) and Separate Mandi Kharidi Patti (`ಖರೀದಿ ಪಟ್ಟಿ`)
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 p-1 bg-slate-200/80 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setCbSubView('CASH_CREDIT_INVOICE')}
+                className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                  cbSubView === 'CASH_CREDIT_INVOICE'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Cash / Credit Bill (ನಗದು / ಉದರಿ ಬಿಲ್ · SGT-CB)
+              </button>
+              <button
+                type="button"
+                onClick={() => setCbSubView('SEPARATE_KHARIDI_PATTI')}
+                className={`px-3.5 py-2 rounded-lg text-xs font-bold transition-all ${
+                  cbSubView === 'SEPARATE_KHARIDI_PATTI'
+                    ? 'bg-pink-600 text-white shadow-2xs'
+                    : 'text-slate-700 hover:text-slate-900'
+                }`}
+              >
+                Kharidi Patti (ಖರೀದಿ ಪಟ್ಟಿ · Separate Section)
+              </button>
+            </div>
+          </div>
+
+          {cbSubView === 'SEPARATE_KHARIDI_PATTI' ? (
+            (() => {
+              const computedRows = skpLines.map((row) => {
+                const bags = Math.max(0, Math.round(Number(row.bags || 0)));
+                const wtPerBagKg = Math.max(0, Number(row.weightPerBagKg || 0));
+                const totalBagWtKg = +(bags * wtPerBagKg).toFixed(2);
+                const q = Math.max(0, Math.floor(Number(row.qtyQuintals || 0)));
+                const kgRaw = Math.max(0, Number(row.qtyKg || 0));
+                const kgClamped = Math.min(99.99, kgRaw);
+                const netQuintals = +(q + kgClamped / 100).toFixed(4);
+                const netWeightKg = +(q * 100 + kgClamped).toFixed(2);
+                const grossWeightKg =
+                  Number(row.grossWeightKg || 0) > 0
+                    ? Number(row.grossWeightKg)
+                    : +(netWeightKg + totalBagWtKg).toFixed(2);
+                const ratePaise = rupeesToPaise(row.ratePerQuintalRupees || '0');
+                const worthPaise = Math.round(netQuintals * ratePaise);
+                return {
+                  ...row,
+                  bags,
+                  wtPerBagKg,
+                  totalBagWtKg,
+                  q,
+                  kg: kgClamped,
+                  kgInvalid: kgRaw >= 100,
+                  netQuintals,
+                  netWeightKg,
+                  grossWeightKg,
+                  ratePaise,
+                  worthPaise,
+                };
+              });
+
+              const totalBags = computedRows.reduce((s, r) => s + r.bags, 0);
+              const totalBagWtKg = computedRows.reduce((s, r) => s + r.totalBagWtKg, 0);
+              const totalGrossKg = computedRows.reduce((s, r) => s + r.grossWeightKg, 0);
+              const totalNetKg = computedRows.reduce((s, r) => s + r.netWeightKg, 0);
+              const totalQ = Math.floor(totalNetKg / 100);
+              const totalRemKg = +(totalNetKg - totalQ * 100).toFixed(2);
+              const totalWorthPaise = computedRows.reduce((s, r) => s + r.worthPaise, 0);
+
+              return (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                  {/* Left 6 Columns: Kharidi Patti Entry Builder */}
+                  <div className="lg:col-span-6 glass-panel rounded-3xl p-6 space-y-5">
+                    <div className="flex items-center justify-between border-b border-slate-200/70 pb-3">
+                      <div>
+                        <div className="text-[11px] font-mono text-pink-600 font-bold">
+                          SEPARATE KHARIDI PATTI SECTION · PHYSICAL MANDI FORMAT
+                        </div>
+                        <h2 className="text-base font-extrabold text-slate-900">
+                          Kharidi Patti (ಖರೀದಿ ಪಟ್ಟಿ) Builder
+                        </h2>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => window.print()}
+                        className="px-3.5 py-2 rounded-xl bg-pink-600 text-white text-xs font-bold hover:bg-pink-500 inline-flex items-center gap-1.5"
+                      >
+                        <Printer className="w-3.5 h-3.5" /> Print / PDF Kharidi Patti
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Patti No (ನಂ.)
+                        </label>
+                        <input
+                          type="text"
+                          value={skpNo}
+                          onChange={(e) => setSkpNo(e.target.value)}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Date (ದಿನಾಂಕ)
+                        </label>
+                        <input
+                          type="date"
+                          value={skpDate}
+                          onChange={(e) => setSkpDate(e.target.value)}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Auto-Fill from Registered Farmer / Party
+                        </label>
+                        <select
+                          value={skpPartyId}
+                          onChange={(e) => {
+                            const pid = e.target.value;
+                            setSkpPartyId(pid);
+                            const found = parties.find((p) => p.id === pid);
+                            if (found) {
+                              setSkpFarmerName(found.name);
+                              setSkpVillage(found.village || '');
+                            }
+                          }}
+                          className="apple-input w-full text-xs"
+                        >
+                          <option value="">-- Custom / Select Party --</option>
+                          {parties.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} ({p.partyCode}) · {p.village || p.partyType}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Farmer / Seller Name (ಶ್ರೀ) *
+                        </label>
+                        <input
+                          type="text"
+                          value={skpFarmerName}
+                          onChange={(e) => setSkpFarmerName(e.target.value)}
+                          placeholder="ರೈತರ ಹೆಸರು / Farmer Name"
+                          className="apple-input w-full text-xs"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Village / Place (ಸಾ / ಊರು) *
+                        </label>
+                        <input
+                          type="text"
+                          value={skpVillage}
+                          onChange={(e) => setSkpVillage(e.target.value)}
+                          placeholder="ಗ್ರಾಮ / Village"
+                          className="apple-input w-full text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-extrabold text-slate-700">
+                          Commodity Lines (ಮಾಲಿನ ಹೆಸರು · ಚೀಲ · ತೂಕ ಕ್ವಿಂಟಲ್/ಕೆಜಿ · ದರ · ಒಟ್ಟು ಮೊತ್ತ)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSkpLines((prev) => [
+                              ...prev,
+                              {
+                                commodityId: stockStatuses[0]?.commodity.id ?? '',
+                                commodityName:
+                                  stockStatuses[0]?.commodity.nameKn ||
+                                  stockStatuses[0]?.commodity.nameEn ||
+                                  '',
+                                bags: '1',
+                                weightPerBagKg: '0.5',
+                                grossWeightKg: '',
+                                qtyQuintals: '1',
+                                qtyKg: '0',
+                                ratePerQuintalRupees: '',
+                              },
+                            ])
+                          }
+                          className="text-xs font-bold text-pink-600 hover:text-pink-500 inline-flex items-center gap-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add Commodity Row
+                        </button>
+                      </div>
+
+                      {skpLines.map((row, idx) => {
+                        const calc = computedRows[idx];
+                        return (
+                          <div
+                            key={idx}
+                            className="p-3.5 rounded-2xl bg-white/85 border border-slate-200/80 space-y-2.5"
+                          >
+                            <div className="grid grid-cols-2 sm:grid-cols-12 gap-2.5 items-end">
+                              <div className="col-span-2 sm:col-span-3">
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                                  Commodity (ಮಾಲಿನ ಹೆಸರು)
+                                </label>
+                                <select
+                                  value={row.commodityId}
+                                  onChange={(e) => {
+                                    const cid = e.target.value;
+                                    const st = stockStatuses.find((s) => s.commodity.id === cid);
+                                    setSkpLines((prev) =>
+                                      prev.map((it, i) =>
+                                        i === idx
+                                          ? {
+                                              ...it,
+                                              commodityId: cid,
+                                              commodityName: st
+                                                ? `${st.commodity.nameKn || st.commodity.nameEn} (${st.commodity.nameEn})`
+                                                : it.commodityName,
+                                            }
+                                          : it
+                                      )
+                                    );
+                                  }}
+                                  className="apple-input w-full text-xs"
+                                >
+                                  {stockStatuses.map((s) => (
+                                    <option key={s.commodity.id} value={s.commodity.id}>
+                                      {s.commodity.nameKn} / {s.commodity.nameEn}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="sm:col-span-1">
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                                  ಚೀಲ (Bags)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={row.bags}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setSkpLines((prev) =>
+                                      prev.map((it, i) => (i === idx ? { ...it, bags: val } : it))
+                                    );
+                                  }}
+                                  className="apple-input w-full font-mono text-xs"
+                                />
+                              </div>
+
+                              <div className="sm:col-span-2">
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                                  Wt/Bag (kg)
+                                </label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={row.weightPerBagKg}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setSkpLines((prev) =>
+                                      prev.map((it, i) =>
+                                        i === idx ? { ...it, weightPerBagKg: val } : it
+                                      )
+                                    );
+                                  }}
+                                  className="apple-input w-full font-mono text-xs"
+                                />
+                              </div>
+
+                              <div className="sm:col-span-2">
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                                  ಕ್ವಿಂಟಲ್ (Q)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="1"
+                                  value={row.qtyQuintals}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setSkpLines((prev) =>
+                                      prev.map((it, i) =>
+                                        i === idx ? { ...it, qtyQuintals: val } : it
+                                      )
+                                    );
+                                  }}
+                                  className="apple-input w-full font-mono text-xs"
+                                />
+                              </div>
+
+                              <div className="sm:col-span-2">
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                                  ಕೆ.ಜಿ. (KG 0-99)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="99.9"
+                                  step="0.5"
+                                  value={row.qtyKg}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setSkpLines((prev) =>
+                                      prev.map((it, i) => (i === idx ? { ...it, qtyKg: val } : it))
+                                    );
+                                  }}
+                                  className="apple-input w-full font-mono text-xs"
+                                />
+                              </div>
+
+                              <div className="sm:col-span-2">
+                                <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                                  ದರ / Q (₹)
+                                </label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={row.ratePerQuintalRupees}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setSkpLines((prev) =>
+                                      prev.map((it, i) =>
+                                        i === idx ? { ...it, ratePerQuintalRupees: val } : it
+                                      )
+                                    );
+                                  }}
+                                  className="apple-input w-full font-mono text-xs"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[11px] font-mono text-slate-600">
+                              <div className="flex flex-wrap items-center gap-3">
+                                <span>
+                                  Total Wt: <strong>{calc.grossWeightKg.toFixed(1)} kg</strong>
+                                </span>
+                                <span>
+                                  Bag Wt: <strong>{calc.totalBagWtKg.toFixed(1)} kg</strong>
+                                </span>
+                                <span className="text-pink-700">
+                                  Net Qty:{' '}
+                                  <strong>
+                                    {calc.q} Q {calc.kg} KG ({calc.netQuintals.toFixed(2)} Q)
+                                  </strong>
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-extrabold text-slate-900">
+                                  Worth: {formatINR(calc.worthPaise)}
+                                </span>
+                                {skpLines.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSkpLines((prev) => prev.filter((_, i) => i !== idx))
+                                    }
+                                    className="text-slate-400 hover:text-rose-600 p-1"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Right 6 Columns: Physical Pink/White Mandi Kharidi Patti Print Sheet (Page 11 Top Reference) */}
+                  <div className="lg:col-span-6">
+                    <div className="rounded-3xl p-6 bg-pink-50/95 border-2 border-pink-300 shadow-sm space-y-4 text-slate-900">
+                      {/* Top Header with Firm Details from Settings */}
+                      <div className="border-b-2 border-pink-400 pb-3 text-center space-y-1">
+                        <div className="flex items-center justify-between text-[11px] font-mono text-pink-900">
+                          <span>GSTIN: {settings.gstin || '29AAAAA0000A1Z5'}</span>
+                          <span className="px-2.5 py-0.5 rounded-full bg-pink-600 text-white font-bold">
+                            ಖರೀದಿ ಪಟ್ಟಿ / KHARIDI PATTI
+                          </span>
+                          <span>
+                            Ph: {settings.phonePrimary || '94481-00000'}
+                            {settings.phoneSecondary ? `, ${settings.phoneSecondary}` : ''}
+                          </span>
+                        </div>
+                        <h3 className="text-xl font-extrabold text-pink-950 tracking-tight">
+                          ಶ್ರೀ ಗುರು ಟ್ರೇಡರ್ಸ್ · {settings.legalName || 'SHREE GURU TRADERS'}
+                        </h3>
+                        <div className="text-xs font-semibold text-pink-900">
+                          ಜನರಲ್ ಮರ್ಚಂಟ್ಸ್ ಆಂಡ್ ಕಮಿಷನ್ ಏಜೆಂಟ್ಸ್ · General Merchants & Commission Agents
+                        </div>
+                        <div className="text-[11px] text-pink-800">
+                          {settings.address || 'APMC Nehru Market Yard'},{' '}
+                          {settings.villageCity || 'Ranebennur'} - {settings.pincode || '581115'} ·
+                          PAN: {settings.pan || 'AAAAA0000A'}
+                        </div>
+                      </div>
+
+                      {/* No, Date, Farmer Name & Village */}
+                      <div className="grid grid-cols-2 gap-2 text-xs border-b border-pink-300 pb-3">
+                        <div>
+                          <span className="text-pink-800 font-semibold">ನಂ. / No:</span>{' '}
+                          <span className="font-mono font-bold text-base text-rose-700">
+                            {skpNo}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-pink-800 font-semibold">ದಿನಾಂಕ / Date:</span>{' '}
+                          <span className="font-mono font-bold">
+                            {formatDateDDMMYYYY(skpDate)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-pink-800 font-semibold">
+                            ಶ್ರೀ / Farmer Name:
+                          </span>{' '}
+                          <span className="font-bold underline decoration-dotted">
+                            {skpFarmerName || '—'}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-pink-800 font-semibold">ಸಾ / Village:</span>{' '}
+                          <span className="font-bold underline decoration-dotted">
+                            {skpVillage || '—'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Physical Kharidi Patti Table */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs border-collapse border border-pink-400">
+                          <thead>
+                            <tr className="bg-pink-100/90 text-pink-950 font-bold">
+                              <th className="border border-pink-400 p-2 text-left">
+                                ಮಾಲಿನ ಹೆಸರು
+                                <div className="text-[10px] font-normal">Commodity Name</div>
+                              </th>
+                              <th className="border border-pink-400 p-2 text-center">
+                                ಚೀಲ
+                                <div className="text-[10px] font-normal">Bags</div>
+                              </th>
+                              <th className="border border-pink-400 p-2 text-center">
+                                ಒಟ್ಟು ತೂಕ
+                                <div className="text-[10px] font-normal">Total Wt (kg)</div>
+                              </th>
+                              <th className="border border-pink-400 p-2 text-center">
+                                ತೂಕ: ಕ್ವಿಂಟಲ್ - ಕೆ.ಜಿ.
+                                <div className="text-[10px] font-normal">Qty (Q - KG)</div>
+                              </th>
+                              <th className="border border-pink-400 p-2 text-right">
+                                ದರ
+                                <div className="text-[10px] font-normal">Rate / Q</div>
+                              </th>
+                              <th className="border border-pink-400 p-2 text-right">
+                                ಒಟ್ಟು ಮೊತ್ತ ರೂ. ಪೈ.
+                                <div className="text-[10px] font-normal">Worth / Value</div>
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="font-mono">
+                            {computedRows.map((r, i) => (
+                              <tr key={i} className="bg-white/80">
+                                <td className="border border-pink-300 p-2 font-sans font-semibold">
+                                  {r.commodityName}
+                                </td>
+                                <td className="border border-pink-300 p-2 text-center">
+                                  {r.bags}
+                                </td>
+                                <td className="border border-pink-300 p-2 text-center">
+                                  {r.grossWeightKg.toFixed(1)} kg
+                                  <div className="text-[10px] text-slate-500">
+                                    (Bag: {r.totalBagWtKg.toFixed(1)}kg)
+                                  </div>
+                                </td>
+                                <td className="border border-pink-300 p-2 text-center font-bold">
+                                  {r.q} Q - {r.kg} KG
+                                </td>
+                                <td className="border border-pink-300 p-2 text-right">
+                                  {formatINR(r.ratePaise, false)}
+                                </td>
+                                <td className="border border-pink-300 p-2 text-right font-bold text-slate-900">
+                                  {formatINR(r.worthPaise)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr className="bg-pink-100/90 font-mono font-extrabold text-pink-950">
+                              <td className="border border-pink-400 p-2 font-sans">
+                                ಒಟ್ಟು / Total
+                              </td>
+                              <td className="border border-pink-400 p-2 text-center">
+                                {totalBags}
+                              </td>
+                              <td className="border border-pink-400 p-2 text-center">
+                                {totalGrossKg.toFixed(1)} kg
+                                <div className="text-[10px] font-normal">
+                                  (Tare: {totalBagWtKg.toFixed(1)}kg)
+                                </div>
+                              </td>
+                              <td className="border border-pink-400 p-2 text-center">
+                                {totalQ} Q - {totalRemKg} KG
+                              </td>
+                              <td className="border border-pink-400 p-2 text-right">—</td>
+                              <td className="border border-pink-400 p-2 text-right text-sm">
+                                {formatINR(totalWorthPaise)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+
+                      <div className="text-xs italic text-pink-900">
+                        ಅಕ್ಷರದಲ್ಲಿ ರೂಪಾಯಿ / Amount in Words:{' '}
+                        <strong>{paiseToIndianWords(totalWorthPaise)}</strong>
+                      </div>
+
+                      {/* Signature Area */}
+                      <div className="pt-8 border-t border-pink-300 grid grid-cols-2 gap-6 text-xs text-pink-950">
+                        <div>
+                          <div className="h-8 border-b border-pink-400 mb-1" />
+                          <div className="font-bold">ಖರೀದಿದಾರರ ಸಹಿ / Buyer Signature</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="h-8 border-b border-pink-400 mb-1" />
+                          <div className="font-bold">
+                            ಮಾರಾಟಗಾರರ ಸಹಿ / For {settings.legalName || 'Shree Guru Traders'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()
+          ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           <form
             onSubmit={handleSubmitCashCreditBill}
@@ -2726,7 +4276,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold text-slate-700">
-                  Invoice Commodity Lines (Explicit GST Toggle · AT-11)
+                  Invoice Commodity Lines (Bags · Wt/Bag kg · Gross Wt Q · Net Wt Q · Explicit GST · AT-11)
                 </label>
                 <button
                   type="button"
@@ -2736,6 +4286,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                       {
                         commodityId: stockStatuses[0]?.commodity.id ?? '',
                         bags: '',
+                        weightPerBagKg: '0.5',
+                        grossWeightQuintals: '',
                         andiges: '1',
                         weightQuintals: '',
                         rateRupees: '',
@@ -2751,106 +4303,214 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                 </button>
               </div>
 
-              {cbLines.map((line, idx) => (
-                <div
-                  key={idx}
-                  className="p-3.5 rounded-2xl bg-white/75 border border-slate-200/80 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end"
-                >
-                  <div className="sm:col-span-4">
-                    <label className="block text-[11px] text-slate-500 mb-1">Commodity</label>
-                    <select
-                      required
-                      value={line.commodityId}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCbLines((prev) =>
-                          prev.map((it, i) => (i === idx ? { ...it, commodityId: val } : it))
-                        );
-                      }}
-                      className="apple-input w-full text-xs"
-                    >
-                      <option value="">-- Select Commodity --</option>
-                      {stockStatuses.map((s) => (
-                        <option key={s.commodity.id} value={s.commodity.id}>
-                          {s.commodity.nameEn} ({s.commodity.code})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+              {cbLines.map((line, idx) => {
+                const wb = computeLineWeightBreakdown(line);
+                const lineRatePaise = rupeesToPaise(line.rateRupees || '0');
+                const lineBasePaise = Math.round((wb.netWeightGrams / 100_000) * lineRatePaise);
+                return (
+                  <div
+                    key={idx}
+                    className="p-3.5 rounded-2xl bg-white/75 border border-slate-200/80 space-y-2.5"
+                  >
+                    <div className="grid grid-cols-2 sm:grid-cols-12 gap-2.5 items-end">
+                      <div className="col-span-2 sm:col-span-3">
+                        <label className="block text-[11px] text-slate-500 mb-1">Commodity</label>
+                        <select
+                          required
+                          value={line.commodityId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCbLines((prev) =>
+                              prev.map((it, i) => (i === idx ? { ...it, commodityId: val } : it))
+                            );
+                          }}
+                          className="apple-input w-full text-xs"
+                        >
+                          <option value="">-- Select Commodity --</option>
+                          {stockStatuses.map((s) => (
+                            <option key={s.commodity.id} value={s.commodity.id}>
+                              {s.commodity.nameEn} ({s.commodity.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
 
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      value={line.bags}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCbLines((prev) =>
-                          prev.map((it, i) => (i === idx ? { ...it, bags: val } : it))
-                        );
-                      }}
-                      className="apple-input w-full font-mono text-xs"
-                    />
-                  </div>
+                      <div className="sm:col-span-1">
+                        <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
+                        <input
+                          type="number"
+                          min="1"
+                          required
+                          value={line.bags}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCbLines((prev) =>
+                              prev.map((it, i) => {
+                                if (i !== idx) return it;
+                                const next = { ...it, bags: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(it.grossWeightQuintals || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
 
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] text-slate-500 mb-1">Weight (Q)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      required
-                      value={line.weightQuintals}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCbLines((prev) =>
-                          prev.map((it, i) => (i === idx ? { ...it, weightQuintals: val } : it))
-                        );
-                      }}
-                      className="apple-input w-full font-mono text-xs"
-                    />
-                  </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">Wt/Bag (kg)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.50"
+                          value={line.weightPerBagKg}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCbLines((prev) =>
+                              prev.map((it, i) => {
+                                if (i !== idx) return it;
+                                const next = { ...it, weightPerBagKg: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(it.grossWeightQuintals || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
 
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] text-slate-500 mb-1">Rate / Q (₹)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="1"
-                      required
-                      value={line.rateRupees}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCbLines((prev) =>
-                          prev.map((it, i) => (i === idx ? { ...it, rateRupees: val } : it))
-                        );
-                      }}
-                      className="apple-input w-full font-mono text-xs"
-                    />
-                  </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">Gross Wt (Q)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Optional"
+                          value={line.grossWeightQuintals}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCbLines((prev) =>
+                              prev.map((it, i) => {
+                                if (i !== idx) return it;
+                                const next = { ...it, grossWeightQuintals: val };
+                                const nextWb = computeLineWeightBreakdown(next);
+                                return Number(val || 0) > 0
+                                  ? { ...next, weightQuintals: String(nextWb.netWeightQuintals) }
+                                  : next;
+                              })
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
 
-                  <div className="sm:col-span-2 flex items-center pb-1">
-                    <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={line.gstApplicable}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setCbLines((prev) =>
-                            prev.map((it, i) =>
-                              i === idx ? { ...it, gstApplicable: checked } : it
-                            )
-                          );
-                        }}
-                        className="rounded border-slate-300 text-blue-600"
-                      />
-                      <span>5% GST</span>
-                    </label>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">Net Wt (Q)</label>
+                        <input
+                          type="number"
+                          step="0.0001"
+                          min="0.01"
+                          required
+                          value={
+                            Number(line.grossWeightQuintals || 0) > 0
+                              ? String(wb.netWeightQuintals)
+                              : line.weightQuintals
+                          }
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCbLines((prev) =>
+                              prev.map((it, i) =>
+                                i === idx
+                                  ? { ...it, grossWeightQuintals: '', weightQuintals: val }
+                                  : it
+                              )
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] text-slate-500 mb-1">Rate / Q (₹)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="1"
+                          required
+                          value={line.rateRupees}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setCbLines((prev) =>
+                              prev.map((it, i) => (i === idx ? { ...it, rateRupees: val } : it))
+                            );
+                          }}
+                          className="apple-input w-full font-mono text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[11px] font-mono text-slate-600">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span>
+                          Bags: <strong>{wb.bags}</strong>
+                        </span>
+                        <span>
+                          Wt/Bag: <strong>{wb.weightPerBagKg.toFixed(2)} kg</strong>
+                        </span>
+                        <span>
+                          Total Bag Wt:{' '}
+                          <strong>
+                            {wb.totalBagWeightKg.toFixed(2)} kg ({wb.totalBagWeightQuintals.toFixed(3)} Q)
+                          </strong>
+                        </span>
+                        <span>
+                          Gross Wt: <strong>{wb.grossWeightQuintals.toFixed(3)} Q</strong>
+                        </span>
+                        <span className="text-blue-700">
+                          Net Commodity Wt: <strong>{wb.netWeightQuintals.toFixed(3)} Q</strong>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={line.gstApplicable}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setCbLines((prev) =>
+                                prev.map((it, i) =>
+                                  i === idx ? { ...it, gstApplicable: checked } : it
+                                )
+                              );
+                            }}
+                            className="rounded border-slate-300 text-blue-600"
+                          />
+                          <span>5% GST</span>
+                        </label>
+                        <span className="text-xs font-bold text-slate-900">
+                          {formatINR(lineBasePaise, false)}
+                        </span>
+                        {cbLines.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCbLines((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="text-slate-400 hover:text-rose-600 p-1"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Transport & Lorry Dispatch Details (SRS Sec 9.1 & 9.2) */}
@@ -3000,25 +4660,39 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
           {/* Right 5 Columns: Printable Cash/Credit Bill Sheet & Credit Note Reversal (AT-14) */}
           <div className="lg:col-span-5 space-y-6">
             {selectedCashCreditBill && (
-              <div className="glass-panel rounded-3xl p-6 space-y-4 border border-blue-200/80">
-                <div className="flex items-center justify-between border-b border-slate-200/70 pb-3">
-                  <div>
-                    <div className="text-[11px] font-mono text-blue-600 font-semibold">
-                      {selectedCashCreditBill.billKind.replace('_', ' ')} ·{' '}
-                      {selectedCashCreditBill.billNo} · {selectedCashCreditBill.status}
-                    </div>
-                    <h3 className="text-base font-bold text-slate-900">
-                      {selectedCashCreditBill.buyerName} ({selectedCashCreditBill.buyerCode})
-                    </h3>
+              <div className="glass-panel rounded-3xl p-6 space-y-4 border border-amber-300/90 bg-amber-50/40">
+                <div className="border-b border-amber-300/80 pb-3 space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-mono text-slate-600">
+                    <span>GSTIN: {settings.gstin || '29AAAAA0000A1Z5'}</span>
+                    <span className="font-bold text-amber-800">
+                      INVOICE · {selectedCashCreditBill.billKind.replace('_', ' ')}
+                    </span>
+                    <span>Ph: {settings.phonePrimary || '—'}</span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => window.print()}
-                    className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1.5"
-                  >
-                    <Printer className="w-3.5 h-3.5 text-blue-600" />
-                    Print
-                  </button>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-extrabold text-slate-900">
+                        {settings.legalName || 'SHREE GURU TRADERS'} (ಶ್ರೀ ಗುರು ಟ್ರೇಡರ್ಸ್)
+                      </h3>
+                      <div className="text-[11px] text-slate-600">
+                        {settings.address || 'APMC Yard'}, {settings.villageCity || 'Ranebennur'} -{' '}
+                        {settings.pincode || '581115'}
+                      </div>
+                      <div className="text-xs font-bold text-slate-800 mt-1">
+                        Bill No: {selectedCashCreditBill.billNo} · Buyer:{' '}
+                        {selectedCashCreditBill.buyerName} ({selectedCashCreditBill.buyerCode}) ·
+                        Date: {formatDateDDMMYYYY(selectedCashCreditBill.billDate)}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1.5"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-blue-600" />
+                      Print
+                    </button>
+                  </div>
                 </div>
 
                 {selectedCashCreditBill.transport.vehicleNo && (
@@ -3030,15 +4704,26 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                 )}
 
                 <div className="space-y-1.5 text-xs font-mono">
-                  {selectedCashCreditBill.items.map((it) => (
-                    <div key={it.id} className="flex justify-between">
-                      <span className="font-sans">
-                        {it.commodityNameEn} · {it.bags}b ·{' '}
-                        {(it.netWeightGrams / 100_000).toFixed(2)}Q
-                      </span>
-                      <span>{formatINR(it.lineTotalPaise)}</span>
-                    </div>
-                  ))}
+                  {selectedCashCreditBill.items.map((it) => {
+                    const tareKg = (it.tareWeightGrams || 0) / 1000;
+                    const wtPerBagKg = it.bags > 0 ? tareKg / it.bags : 0;
+                    const grossQ = (it.grossWeightGrams || it.netWeightGrams) / 100_000;
+                    const netQ = it.netWeightGrams / 100_000;
+                    return (
+                      <div key={it.id} className="space-y-0.5">
+                        <div className="flex justify-between">
+                          <span className="font-sans">
+                            {it.commodityNameEn} · {it.bags} Bags · Net {netQ.toFixed(2)}Q
+                          </span>
+                          <span>{formatINR(it.lineTotalPaise)}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          Gross Wt: {grossQ.toFixed(3)}Q · Bag Wt: {tareKg.toFixed(2)}kg (
+                          {wtPerBagKg.toFixed(2)}kg/bag) · Net Commodity Wt: {netQ.toFixed(3)}Q
+                        </div>
+                      </div>
+                    );
+                  })}
                   {selectedCashCreditBill.cstOrOtherTaxPaise > 0 && (
                     <div className="flex justify-between text-slate-600">
                       <span className="font-sans">
@@ -3053,6 +4738,20 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                   </div>
                   <div className="text-[11px] font-sans text-slate-600 italic">
                     {selectedCashCreditBill.amountInWords}
+                  </div>
+                </div>
+
+                {/* Signature Area */}
+                <div className="pt-6 border-t border-dashed border-amber-300 grid grid-cols-2 gap-4 text-[11px] text-slate-700">
+                  <div>
+                    <div className="h-8 border-b border-slate-300 mb-1" />
+                    <div className="font-semibold">ಖರೀದಿದಾರರ ಸಹಿ / Buyer Signature</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="h-8 border-b border-slate-300 mb-1" />
+                    <div className="font-semibold">
+                      For {settings.legalName || 'Shree Guru Traders'}
+                    </div>
                   </div>
                 </div>
 
@@ -3138,6 +4837,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
               )}
             </div>
           </div>
+        </div>
+          )}
         </div>
       )}
     </div>
