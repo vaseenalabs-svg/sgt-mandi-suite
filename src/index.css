@@ -63,6 +63,14 @@
   box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.14);
 }
 
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 @media print {
   body {
     background: #FFFFFF !important;

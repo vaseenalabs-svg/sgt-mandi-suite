@@ -63,7 +63,7 @@ import { FloatingCalculator } from './components/FloatingCalculator';
 import { FloatingQuickActionMenu } from './components/FloatingQuickActionMenu';
 import { LoginPage } from './components/LoginPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LogOut, KeyRound, CheckCircle2, AlertCircle } from 'lucide-react';
+import { LogOut, KeyRound, CheckCircle2, AlertCircle, User } from 'lucide-react';
 
 type ActiveSection =
   | 'dashboard'
@@ -906,7 +906,7 @@ export default function App() {
           {t(lang, 'brandName')}
         </a>
 
-        <nav className="flex items-center gap-5 text-xs font-medium text-slate-600 overflow-x-auto">
+        <nav className="flex items-center gap-5 text-xs font-medium text-slate-600 overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setActiveSection('dashboard')}
@@ -1063,7 +1063,7 @@ export default function App() {
       </header>
 
       {/* Secondary Workspace Toolbar */}
-      <div className="max-w-7xl w-full mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/60 no-print">
+      <div className="max-w-7xl w-full mx-auto px-6 py-2.5 flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/80 bg-white/50 backdrop-blur-xs no-print">
         <div className="flex items-center gap-3 text-xs text-slate-600">
           <span className="font-semibold text-slate-800">{t(lang, 'brandTagline')}</span>
           <span aria-hidden="true" className="text-slate-300">·</span>
@@ -1082,30 +1082,34 @@ export default function App() {
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           {users.length > 0 && (
-            <select
-              aria-label="Switch Active User Role"
-              value={activeUserId}
-              onChange={(e) => handleSelectActiveUser(e.target.value)}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-2xs focus:border-blue-600 focus:outline-none"
-            >
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  Role: {u.role} — {u.username}
-                </option>
-              ))}
-            </select>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white rounded-xl border border-slate-300 shadow-2xs">
+              <User className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+              <span className="text-[11px] font-medium text-slate-500 whitespace-nowrap">Switch Role:</span>
+              <select
+                aria-label="Switch Active User Role"
+                value={activeUserId}
+                onChange={(e) => handleSelectActiveUser(e.target.value)}
+                className="bg-transparent text-xs font-semibold text-slate-900 border-none p-0 pr-1 focus:ring-0 focus:outline-none cursor-pointer"
+              >
+                {users.map((u) => (
+                  <option key={u.id} value={u.id} className="text-slate-900 bg-white py-1">
+                    {u.role} — {u.username}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
 
-          <div className="inline-flex items-center gap-1 p-1 bg-slate-200/80 rounded-xl border border-slate-300/60">
+          <div className="inline-flex items-center gap-1 p-1 bg-slate-200/80 rounded-xl border border-slate-300/80 shadow-2xs">
             <button
               type="button"
               onClick={() => setLang('en')}
-              className={`px-3 py-1 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 ${
+              className={`px-3 py-1 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                 lang === 'en'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-700 hover:text-slate-900'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-700 hover:text-slate-900 hover:bg-slate-300/50'
               }`}
             >
               English
@@ -1113,10 +1117,10 @@ export default function App() {
             <button
               type="button"
               onClick={() => setLang('kn')}
-              className={`px-3 py-1 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 ${
+              className={`px-3 py-1 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                 lang === 'kn'
-                  ? 'bg-white text-slate-900 shadow-2xs'
-                  : 'text-slate-700 hover:text-slate-900'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-700 hover:text-slate-900 hover:bg-slate-300/50'
               }`}
             >
               ಕನ್ನಡ
