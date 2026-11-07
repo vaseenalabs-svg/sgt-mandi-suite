@@ -37,7 +37,7 @@ import {
   StockOwnershipType,
   UserProfile,
 } from '../shared/types';
-import { formatDateDDMMYYYY, formatINR, paiseToIndianWords, rupeesToPaise } from '../shared/math';
+import { calculateStatutoryCharge, formatDateDDMMYYYY, formatINR, paiseToIndianWords, rupeesToPaise } from '../shared/math';
 import { LanguageCode } from '../shared/i18n';
 
 interface PattiAndBillingViewProps {
@@ -338,7 +338,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     String((settings.commissionHamaliPolicy.defaultHamaliPerBagPaise || 0) / 100)
   );
   const [fpWeighmentRupees, setFpWeighmentRupees] = useState<string>('0');
-  const [fpMandiFeeRupees, setFpMandiFeeRupees] = useState<string>('0');
+  const [fpRmcPct, setFpRmcPct] = useState<string>('0');
   const [fpOtherDedRupees, setFpOtherDedRupees] = useState<string>('0');
   const [fpOtherDedLabel, setFpOtherDedLabel] = useState<string>(
     settings.customLabels?.niituFeeLabelEn || 'Niitu / Tukad Fee'
@@ -370,7 +370,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
   ]);
   const [kpCommPct, setKpCommPct] = useState<string>('0');
   const [kpHamaliPackingRupees, setKpHamaliPackingRupees] = useState<string>('0');
-  const [kpMarketFeeRupees, setKpMarketFeeRupees] = useState<string>('0');
+  const [kpRmcPct, setKpRmcPct] = useState<string>('1.5');
   const [kpPaymentMode, setKpPaymentMode] = useState<KharidiPaymentMode>('CREDIT');
   const [kpBankAccountId, setKpBankAccountId] = useState<string>(bankAccounts[0]?.id ?? '');
   const [kpAmountReceivedRupees, setKpAmountReceivedRupees] = useState<string>('0');
@@ -404,7 +404,6 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
   const [dvTukadPerBagRupees, setDvTukadPerBagRupees] = useState<string>('0');
   const [dvTukadRupees, setDvTukadRupees] = useState<string>('0');
   const [dvRmcPct, setDvRmcPct] = useState<string>('1.5');
-  const [dvRmcRupees, setDvRmcRupees] = useState<string>('0');
   const [dvVehicleRentRupees, setDvVehicleRentRupees] = useState<string>('0');
   const [dvHandLoanRupees, setDvHandLoanRupees] = useState<string>('0');
   const [dvPaymentMode, setDvPaymentMode] = useState<PattiSettlementPaymentMode>('CASH');
@@ -442,7 +441,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
   ]);
   const [cbCommRupees, setCbCommRupees] = useState<string>('0');
   const [cbHamaliRupees, setCbHamaliRupees] = useState<string>('0');
-  const [cbRmcRupees, setCbRmcRupees] = useState<string>('0');
+  const [cbRmcPct, setCbRmcPct] = useState<string>('1.0');
   const [cbTukadRupees, setCbTukadRupees] = useState<string>('0');
   const [cbCstLabel, setCbCstLabel] = useState<string>(
     settings.customLabels?.cstOrOtherTaxLabelEn || 'CST / Other Tax'
@@ -521,7 +520,13 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     const hamaliPerBagPaise = rupeesToPaise(fpHamaliPerBagRupees || '0');
     const hamaliAmountPaise = totalBags * hamaliPerBagPaise;
     const weighmentFeePaise = rupeesToPaise(fpWeighmentRupees || '0');
-    const mandiFeePaise = rupeesToPaise(fpMandiFeeRupees || '0');
+    const rmcBasis = settings.statutoryChargePolicy?.calculationBasis || 'VALUE';
+    const rmcCharge = calculateStatutoryCharge(
+      rmcBasis === 'WEIGHT' ? totalNetWeightGrams : grossCropAmountPaise,
+      Number(fpRmcPct || 0),
+      rmcBasis
+    );
+    const mandiFeePaise = rmcCharge.deductionAmountPaise;
     const otherDeductionsPaise = rupeesToPaise(fpOtherDedRupees || '0');
 
     const totalOperationalDeductionsPaise =
@@ -605,11 +610,12 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     fpCommPct,
     fpHamaliPerBagRupees,
     fpWeighmentRupees,
-    fpMandiFeeRupees,
+    fpRmcPct,
     fpOtherDedRupees,
     primaryActiveLoan,
     fpRecoverLoan,
     fpCustomLoanRecoveryRupees,
+    settings,
   ]);
 
   // Live Kharidi Patti calculation preview
@@ -638,7 +644,13 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     const buyerCommBps = Math.max(0, Math.round(Number(kpCommPct || 0) * 100));
     const buyerCommissionPaise = Math.round((totalBaseAmountPaise * buyerCommBps) / 10_000);
     const buyerHamaliPackingPaise = rupeesToPaise(kpHamaliPackingRupees || '0');
-    const buyerMarketFeePaise = rupeesToPaise(kpMarketFeeRupees || '0');
+    const rmcBasis = settings.statutoryChargePolicy?.calculationBasis || 'VALUE';
+    const rmcCharge = calculateStatutoryCharge(
+      rmcBasis === 'WEIGHT' ? totalNetWeightGrams : totalBaseAmountPaise,
+      Number(kpRmcPct || 0),
+      rmcBasis
+    );
+    const buyerMarketFeePaise = rmcCharge.deductionAmountPaise;
 
     const netReceivablePaise =
       totalBaseAmountPaise +
@@ -658,7 +670,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
       totalGstPaise,
       netReceivablePaise,
     };
-  }, [kpLines, kpCommPct, kpHamaliPackingRupees, kpMarketFeeRupees]);
+  }, [kpLines, kpCommPct, kpHamaliPackingRupees, kpRmcPct, settings]);
 
   const handleSubmitFarmerPatti = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -848,11 +860,14 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     const tukadPerBagPaise = rupeesToPaise(dvTukadPerBagRupees || '0');
     const tukadFeePaise =
       tukadPerBagPaise > 0 ? totalBags * tukadPerBagPaise : rupeesToPaise(dvTukadRupees || '0');
+    const rmcBasis = settings.statutoryChargePolicy?.calculationBasis || 'VALUE';
+    const rmcCharge = calculateStatutoryCharge(
+      rmcBasis === 'WEIGHT' ? totalNetWeightGrams : totalBaseAmountPaise,
+      Number(dvRmcPct || 0),
+      rmcBasis
+    );
     const rmcBps = Math.max(0, Math.round(Number(dvRmcPct || 0) * 100));
-    const rmcFeePaise =
-      rmcBps > 0
-        ? Math.round((totalBaseAmountPaise * rmcBps) / 10_000)
-        : rupeesToPaise(dvRmcRupees || '0');
+    const rmcFeePaise = rmcCharge.deductionAmountPaise;
     const vehicleRentPaise = rupeesToPaise(dvVehicleRentRupees || '0');
     const handLoanAdvancePaise = rupeesToPaise(dvHandLoanRupees || '0');
 
@@ -903,9 +918,9 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
     dvTukadPerBagRupees,
     dvTukadRupees,
     dvRmcPct,
-    dvRmcRupees,
     dvVehicleRentRupees,
     dvHandLoanRupees,
+    settings,
   ]);
 
   // Live Cash / Credit Bill calculation preview
@@ -936,7 +951,13 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
 
     const commissionPaise = rupeesToPaise(cbCommRupees || '0');
     const hamaliPackingPaise = rupeesToPaise(cbHamaliRupees || '0');
-    const rmcFeePaise = rupeesToPaise(cbRmcRupees || '0');
+    const rmcBasis = settings.statutoryChargePolicy?.calculationBasis || 'VALUE';
+    const rmcCharge = calculateStatutoryCharge(
+      rmcBasis === 'WEIGHT' ? totalNetWeightGrams : totalBaseAmountPaise,
+      Number(cbRmcPct || 0),
+      rmcBasis
+    );
+    const rmcFeePaise = rmcCharge.deductionAmountPaise;
     const tukadFeePaise = rupeesToPaise(cbTukadRupees || '0');
     const cstOrOtherTaxPaise = rupeesToPaise(cbCstRupees || '0');
 
@@ -963,7 +984,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
       netBillAmountPaise,
       amountInWords: paiseToIndianWords(netBillAmountPaise),
     };
-  }, [cbLines, cbCommRupees, cbHamaliRupees, cbRmcRupees, cbTukadRupees, cbCstRupees]);
+  }, [cbLines, cbCommRupees, cbHamaliRupees, cbRmcPct, cbTukadRupees, cbCstRupees, settings]);
 
   const handleSubmitDalaliPatti = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1412,8 +1433,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                         </select>
                       </div>
 
-                      <div className="sm:col-span-1">
-                        <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Bags (ಚೀಲಗಳು)</label>
                         <input
                           type="number"
                           min="1"
@@ -1433,11 +1454,11 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                               })
                             );
                           }}
-                          className="apple-input w-full font-mono text-xs"
+                          className="apple-input w-full min-w-[90px] font-mono text-sm sm:text-base font-semibold px-2.5 py-1.5"
                         />
                       </div>
 
-                      <div className="sm:col-span-2">
+                      <div className="sm:col-span-1">
                         <label className="block text-[11px] text-slate-500 mb-1">
                           Wt/Bag (kg)
                         </label>
@@ -1632,15 +1653,19 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
 
               <div>
                 <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  Mandi / RMC Fee (₹)
+                  RMC / Mandi Fee (%)
                 </label>
                 <input
                   type="number"
+                  step="0.01"
                   min="0"
-                  value={fpMandiFeeRupees}
-                  onChange={(e) => setFpMandiFeeRupees(e.target.value)}
+                  value={fpRmcPct}
+                  onChange={(e) => setFpRmcPct(e.target.value)}
                   className="apple-input w-full font-mono text-xs"
                 />
+                <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                  RMC ({fpRmcPct || 0}%): {formatINR(fpPreview.mandiFeePaise, false)}
+                </div>
               </div>
 
               <div>
@@ -1891,10 +1916,7 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                     </span>
                   </div>
                   <div className="flex justify-between text-slate-600">
-                    <span className="font-sans">
-                      Less: Commission / ದಲ್ಲಾಳಿ (
-                      {(selectedFarmerPatti.commissionRateBps / 100).toFixed(2)}%):
-                    </span>
+                    <span className="font-sans">Less: Commission / ದಲ್ಲಾಳಿ:</span>
                     <span>-{formatINR(selectedFarmerPatti.commissionAmountPaise)}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
@@ -2488,8 +2510,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                         </select>
                       </div>
 
-                      <div className="sm:col-span-1">
-                        <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Bags (ಚೀಲಗಳು)</label>
                         <input
                           type="number"
                           min="1"
@@ -2508,11 +2530,11 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                               })
                             );
                           }}
-                          className="apple-input w-full font-mono text-xs"
+                          className="apple-input w-full min-w-[90px] font-mono text-sm sm:text-base font-semibold px-2.5 py-1.5"
                         />
                       </div>
 
-                      <div className="sm:col-span-2">
+                      <div className="sm:col-span-1">
                         <label className="block text-[11px] text-slate-500 mb-1">Wt/Bag (kg)</label>
                         <input
                           type="number"
@@ -2702,15 +2724,19 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
 
               <div>
                 <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  Market / APMC Cess (₹)
+                  Market Fee / APMC Cess (%)
                 </label>
                 <input
                   type="number"
+                  step="0.01"
                   min="0"
-                  value={kpMarketFeeRupees}
-                  onChange={(e) => setKpMarketFeeRupees(e.target.value)}
+                  value={kpRmcPct}
+                  onChange={(e) => setKpRmcPct(e.target.value)}
                   className="apple-input w-full font-mono text-xs"
                 />
+                <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                  Cess ({kpRmcPct || 0}%): {formatINR(kpPreview.buyerMarketFeePaise, false)}
+                </div>
               </div>
 
               <div>
@@ -3031,8 +3057,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                         </select>
                       </div>
 
-                      <div className="sm:col-span-1">
-                        <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Bags (ಚೀಲಗಳು)</label>
                         <input
                           type="number"
                           min="1"
@@ -3051,11 +3077,11 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                               })
                             );
                           }}
-                          className="apple-input w-full font-mono text-xs"
+                          className="apple-input w-full min-w-[90px] font-mono text-sm sm:text-base font-semibold px-2.5 py-1.5"
                         />
                       </div>
 
-                      <div className="sm:col-span-2">
+                      <div className="sm:col-span-1">
                         <label className="block text-[11px] text-slate-500 mb-1">Wt/Bag (kg)</label>
                         <input
                           type="number"
@@ -4335,8 +4361,8 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                         </select>
                       </div>
 
-                      <div className="sm:col-span-1">
-                        <label className="block text-[11px] text-slate-500 mb-1">Bags</label>
+                      <div className="sm:col-span-2">
+                        <label className="block text-[11px] font-semibold text-slate-700 mb-1">Bags (ಚೀಲಗಳು)</label>
                         <input
                           type="number"
                           min="1"
@@ -4355,11 +4381,11 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
                               })
                             );
                           }}
-                          className="apple-input w-full font-mono text-xs"
+                          className="apple-input w-full min-w-[90px] font-mono text-sm sm:text-base font-semibold px-2.5 py-1.5"
                         />
                       </div>
 
-                      <div className="sm:col-span-2">
+                      <div className="sm:col-span-1">
                         <label className="block text-[11px] text-slate-500 mb-1">Wt/Bag (kg)</label>
                         <input
                           type="number"
@@ -4600,15 +4626,19 @@ export const PattiAndBillingView: React.FC<PattiAndBillingViewProps> = ({
 
               <div>
                 <label className="block text-[11px] font-medium text-slate-600 mb-1">
-                  {settings.customLabels.rmcFeeLabelEn} (₹)
+                  {settings.customLabels.rmcFeeLabelEn} (%)
                 </label>
                 <input
                   type="number"
+                  step="0.01"
                   min="0"
-                  value={cbRmcRupees}
-                  onChange={(e) => setCbRmcRupees(e.target.value)}
+                  value={cbRmcPct}
+                  onChange={(e) => setCbRmcPct(e.target.value)}
                   className="apple-input w-full font-mono text-xs"
                 />
+                <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                  RMC ({cbRmcPct || 0}%): {formatINR(cbPreview.rmcFeePaise, false)}
+                </div>
               </div>
 
               <div>

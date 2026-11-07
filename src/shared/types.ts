@@ -88,6 +88,12 @@ export interface InterestPolicyConfig {
   ownerConfirmed: boolean;
 }
 
+export interface StatutoryChargeConfig {
+  defaultRmcPercentage: number; // e.g. 1.5%
+  defaultCessPercentage: number; // e.g. 0.5%
+  calculationBasis: 'VALUE' | 'WEIGHT'; // defaults to 'VALUE'
+}
+
 export interface CommissionHamaliPolicyConfig {
   defaultCommissionBps: number; // e.g. 200 = 2.00%
   defaultHamaliPerBagPaise: number; // e.g. 1000 = ₹10.00
@@ -138,6 +144,7 @@ export interface CompanySettings {
   stockValuationMethod: 'WEIGHTED_AVERAGE' | 'FIFO' | 'MANUAL';
   interestPolicy: InterestPolicyConfig;
   commissionHamaliPolicy: CommissionHamaliPolicyConfig;
+  statutoryChargePolicy?: StatutoryChargeConfig;
   customLabels: CustomLabelsConfig;
   approvalThresholds: ApprovalThresholdsConfig;
   version: number;

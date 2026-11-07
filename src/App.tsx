@@ -63,7 +63,7 @@ import { FloatingCalculator } from './components/FloatingCalculator';
 import { FloatingQuickActionMenu } from './components/FloatingQuickActionMenu';
 import { LoginPage } from './components/LoginPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { LogOut, KeyRound, CheckCircle2, AlertCircle, User } from 'lucide-react';
+import { LogOut, KeyRound, CheckCircle2, AlertCircle, User, ChevronDown } from 'lucide-react';
 
 type ActiveSection =
   | 'dashboard'
@@ -906,7 +906,10 @@ export default function App() {
           {t(lang, 'brandName')}
         </a>
 
-        <nav className="flex items-center gap-5 text-xs font-medium text-slate-600 overflow-x-auto no-scrollbar">
+        <nav
+          className="flex items-center gap-5 text-xs font-medium text-slate-600 overflow-x-auto no-scrollbar py-1"
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+        >
           <button
             type="button"
             onClick={() => setActiveSection('dashboard')}
@@ -1063,7 +1066,7 @@ export default function App() {
       </header>
 
       {/* Secondary Workspace Toolbar */}
-      <div className="max-w-7xl w-full mx-auto px-6 py-2.5 flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/80 bg-white/50 backdrop-blur-xs no-print">
+      <div className="max-w-7xl w-full mx-auto px-6 py-3 flex flex-wrap items-center justify-between gap-4 border-b border-slate-200/80 bg-white/60 backdrop-blur-xs no-print">
         <div className="flex items-center gap-3 text-xs text-slate-600">
           <span className="font-semibold text-slate-800">{t(lang, 'brandTagline')}</span>
           <span aria-hidden="true" className="text-slate-300">·</span>
@@ -1084,29 +1087,32 @@ export default function App() {
 
         <div className="flex items-center gap-3 shrink-0">
           {users.length > 0 && (
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white rounded-xl border border-slate-300 shadow-2xs">
-              <User className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-              <span className="text-[11px] font-medium text-slate-500 whitespace-nowrap">Switch Role:</span>
-              <select
-                aria-label="Switch Active User Role"
-                value={activeUserId}
-                onChange={(e) => handleSelectActiveUser(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-slate-900 border-none p-0 pr-1 focus:ring-0 focus:outline-none cursor-pointer"
-              >
-                {users.map((u) => (
-                  <option key={u.id} value={u.id} className="text-slate-900 bg-white py-1">
-                    {u.role} — {u.username}
-                  </option>
-                ))}
-              </select>
+            <div className="inline-flex items-center gap-2 h-9 px-3 bg-white rounded-xl border border-slate-300 shadow-xs hover:border-slate-400 transition-colors">
+              <User className="w-4 h-4 text-blue-600 shrink-0" />
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">Role:</span>
+              <div className="relative inline-flex items-center">
+                <select
+                  aria-label="Switch Active User Role"
+                  value={activeUserId}
+                  onChange={(e) => handleSelectActiveUser(e.target.value)}
+                  className="appearance-none bg-transparent text-xs font-bold text-slate-900 pr-5 pl-1 py-1 focus:outline-none cursor-pointer leading-normal"
+                >
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id} className="text-slate-900 bg-white py-1">
+                      {u.role} — {u.username}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-500 pointer-events-none absolute right-0" />
+              </div>
             </div>
           )}
 
-          <div className="inline-flex items-center gap-1 p-1 bg-slate-200/80 rounded-xl border border-slate-300/80 shadow-2xs">
+          <div className="inline-flex items-center gap-1 h-9 p-1 bg-slate-200/80 rounded-xl border border-slate-300/80 shadow-xs">
             <button
               type="button"
               onClick={() => setLang('en')}
-              className={`px-3 py-1 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`h-7 px-3 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer flex items-center justify-center ${
                 lang === 'en'
                   ? 'bg-blue-600 text-white shadow-xs'
                   : 'text-slate-700 hover:text-slate-900 hover:bg-slate-300/50'
@@ -1117,7 +1123,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setLang('kn')}
-              className={`px-3 py-1 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+              className={`h-7 px-3 text-xs font-bold rounded-lg transition-all whitespace-nowrap shrink-0 cursor-pointer flex items-center justify-center ${
                 lang === 'kn'
                   ? 'bg-blue-600 text-white shadow-xs'
                   : 'text-slate-700 hover:text-slate-900 hover:bg-slate-300/50'
@@ -1177,6 +1183,7 @@ export default function App() {
                 onRecordBuyerCollection={handleRecordBuyerCollection}
                 onRecordExpenseOrCommitment={handleRecordExpenseOrCommitment}
                 onPostJournalEntry={handlePostJournalEntry}
+                onRefresh={() => loadBootstrap()}
               />
             )}
 

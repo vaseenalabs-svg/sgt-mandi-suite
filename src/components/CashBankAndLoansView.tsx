@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   AlertTriangle,
+  ArrowDownLeft,
   ArrowLeftRight,
   Building2,
   CheckCircle2,
@@ -9,6 +10,7 @@ import {
   FileSpreadsheet,
   Plus,
   RefreshCw,
+  X,
 } from 'lucide-react';
 import {
   BankAccountRecord,
@@ -173,6 +175,17 @@ export const CashBankAndLoansView: React.FC<CashBankAndLoansViewProps> = ({
   // --- Loan Schedule Inspection State ---
   const [inspectedLoan, setInspectedLoan] = useState<LoanRecord | null>(null);
 
+  // --- Recover Loan + Interest Workflow State (Task 4) ---
+  const [showRecoverModal, setShowRecoverModal] = useState<boolean>(false);
+  const [selectedFarmerForRecovery, setSelectedFarmerForRecovery] = useState<string>('');
+  const [recoverDate, setRecoverDate] = useState<string>(businessDate);
+  const [recoverAmountRupees, setRecoverAmountRupees] = useState<string>('');
+  const [recoverPaymentMode, setRecoverPaymentMode] = useState<LoanPaymentMode>('CASH');
+  const [recoverBankAccountId, setRecoverBankAccountId] = useState<string>(bankAccounts[0]?.id || '');
+  const [recoverRefNo, setRecoverRefNo] = useState<string>('');
+  const [recoverNotes, setRecoverNotes] = useState<string>('');
+  const [isRecoverSubmitting, setIsRecoverSubmitting] = useState<boolean>(false);
+
   // --- Bank Account Creation & Internal Transfer State (AT-10) ---
   const [showBankForm, setShowBankForm] = useState<boolean>(false);
   const [bankName, setBankName] = useState<string>('');
@@ -287,6 +300,65 @@ export const CashBankAndLoansView: React.FC<CashBankAndLoansViewProps> = ({
         type: 'error',
         message: err instanceof Error ? err.message : 'Failed to record loan repayment',
       });
+    }
+  };
+
+  const activeFarmersWithLoans = farmers.filter((f) =>
+    loans.some((l) => l.farmerId === f.id && l.status === 'ACTIVE' && l.totalOutstandingAsOfTodayPaise > 0)
+  );
+
+  const farmerActiveLoans = loans.filter(
+    (l) => l.farmerId === selectedFarmerForRecovery && l.status === 'ACTIVE'
+  );
+
+  const recoveryAgg = {
+    principal: farmerActiveLoans.reduce((s, l) => s + l.principalOutstandingPaise, 0),
+    interest: farmerActiveLoans.reduce((s, l) => s + (l.accruedInterestAsOfTodayPaise || 0), 0),
+    totalDue: farmerActiveLoans.reduce((s, l) => s + l.totalOutstandingAsOfTodayPaise, 0),
+  };
+
+  const handleRecoverLoanAndInterestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isRecoverSubmitting || farmerActiveLoans.length === 0) return;
+    setIsRecoverSubmitting(true);
+    setFeedback(null);
+    try {
+      const recoveryPaise = rupeesToPaise(recoverAmountRupees || '0');
+      if (recoveryPaise <= 0) {
+        throw new Error('Please enter a valid recovery amount greater than zero.');
+      }
+      let remainingToAllocate = recoveryPaise;
+      for (const loan of farmerActiveLoans) {
+        if (remainingToAllocate <= 0) break;
+        const loanTotalDue = loan.totalOutstandingAsOfTodayPaise;
+        const allocateToThis = Math.min(remainingToAllocate, loanTotalDue);
+        await onRecordLoanRepayment(loan.id, {
+          repaymentDate: recoverDate,
+          amountPaise: allocateToThis,
+          paymentMode: recoverPaymentMode,
+          bankAccountId: recoverPaymentMode !== 'CASH' ? recoverBankAccountId : null,
+          referenceNo: recoverRefNo.trim() || undefined,
+          allocationOverride: RepaymentAllocationOrder.INTEREST_FIRST,
+          notes: recoverNotes.trim() || `Recover Loan + Interest for ${loan.farmerName} (${loan.loanNo})`,
+        });
+        remainingToAllocate -= allocateToThis;
+      }
+
+      setShowRecoverModal(false);
+      setRecoverAmountRupees('');
+      setRecoverRefNo('');
+      setRecoverNotes('');
+      setFeedback({
+        type: 'success',
+        message: `Successfully recovered ${formatINR(recoveryPaise)} against loans for ${farmerActiveLoans[0]?.farmerName || 'farmer'}.`,
+      });
+    } catch (err) {
+      setFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to recover loan and interest',
+      });
+    } finally {
+      setIsRecoverSubmitting(false);
     }
   };
 
@@ -617,18 +689,39 @@ export const CashBankAndLoansView: React.FC<CashBankAndLoansViewProps> = ({
                 Central Khata Book.
               </p>
             </div>
-            <button
-              type="button"
-              disabled={!canDisburseLoans}
-              onClick={() => {
-                if (!loanFarmerId && farmers[0]?.id) setLoanFarmerId(farmers[0].id);
-                setShowLoanForm(!showLoanForm);
-              }}
-              className="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 disabled:opacity-40 transition-all inline-flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Disburse Farmer Loan (AT-02 / AT-03)
-            </button>
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                disabled={!canPostReceipts || loans.filter((l) => l.status === 'ACTIVE').length === 0}
+                onClick={() => {
+                  setShowRecoverModal(true);
+                  if (activeFarmersWithLoans[0]?.id) {
+                    setSelectedFarmerForRecovery(activeFarmersWithLoans[0].id);
+                    const matching = loans.filter(
+                      (l) => l.farmerId === activeFarmersWithLoans[0].id && l.status === 'ACTIVE'
+                    );
+                    const tot = matching.reduce((s, l) => s + l.totalOutstandingAsOfTodayPaise, 0);
+                    setRecoverAmountRupees(tot > 0 ? String(tot / 100) : '');
+                  }
+                }}
+                className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-500 disabled:opacity-40 transition-all inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <ArrowDownLeft className="w-3.5 h-3.5" />
+                Recover Loan + Interest
+              </button>
+              <button
+                type="button"
+                disabled={!canDisburseLoans}
+                onClick={() => {
+                  if (!loanFarmerId && farmers[0]?.id) setLoanFarmerId(farmers[0].id);
+                  setShowLoanForm(!showLoanForm);
+                }}
+                className="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 disabled:opacity-40 transition-all inline-flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Disburse Farmer Loan (AT-02 / AT-03)
+              </button>
+            </div>
           </div>
 
           {showLoanForm && (
@@ -798,80 +891,346 @@ export const CashBankAndLoansView: React.FC<CashBankAndLoansViewProps> = ({
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-200/70 text-slate-500 bg-slate-50/60">
-                    <th className="py-3 px-4 font-medium">Loan Voucher & Date</th>
-                    <th className="py-3 px-3 font-medium">Farmer</th>
-                    <th className="py-3 px-3 font-medium">Mode & Rate</th>
-                    <th className="py-3 px-3 font-medium text-right">Principal Disbursed</th>
-                    <th className="py-3 px-3 font-medium text-right">Outstanding Principal</th>
-                    <th className="py-3 px-3 font-medium text-right">Status</th>
-                    <th className="py-3 px-4 font-medium text-right">Actions</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700">Farmer Name</th>
+                    <th className="py-3 px-3 font-semibold text-slate-700">Loan Date</th>
+                    <th className="py-3 px-3 font-semibold text-slate-700 text-right">Original Loan Amount (Principal)</th>
+                    <th className="py-3 px-3 font-semibold text-slate-700 text-right">S. Interest (Simple Interest)</th>
+                    <th className="py-3 px-3 font-semibold text-slate-700 text-right">Total Amount (Principal + Interest)</th>
+                    <th className="py-3 px-3 font-semibold text-slate-700 text-right">Outstanding Balance</th>
+                    <th className="py-3 px-3 font-semibold text-slate-700 text-center">Status</th>
+                    <th className="py-3 px-4 font-semibold text-slate-700 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200/50">
-                  {loans.map((ln) => (
-                    <tr key={ln.id} className="hover:bg-white/60">
-                      <td className="py-3 px-4 font-mono">
-                        <div className="font-bold text-blue-600">{ln.loanNo}</div>
-                        <div className="text-[11px] text-slate-500">
-                          {formatDateDDMMYYYY(ln.disbursementDate)}
-                        </div>
-                      </td>
-                      <td className="py-3 px-3">
-                        <div className="font-semibold text-slate-900">{ln.farmerName}</div>
-                        <div className="text-[11px] font-mono text-slate-500">{ln.farmerCode}</div>
-                      </td>
-                      <td className="py-3 px-3 font-mono text-[11px]">
-                        <div>{ln.paymentMode}</div>
-                        <div className="text-slate-500">
-                          {(ln.interestRateBps / 100).toFixed(2)}% ({ln.interestMethod})
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono font-semibold text-slate-800">
-                        {formatINR(ln.principalPaise)}
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono font-bold text-amber-700">
-                        {formatINR(ln.principalOutstandingPaise)}
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono font-semibold">
-                        <span
-                          className={
-                            ln.status === 'CLOSED' ? 'text-emerald-700' : 'text-blue-600'
-                          }
-                        >
-                          {ln.status}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="inline-flex items-center gap-3">
-                          {ln.status === 'ACTIVE' && canPostReceipts && (
+                  {loans.map((ln) => {
+                    const simpleInterestPaise = ln.accruedInterestAsOfTodayPaise || 0;
+                    const totalAmountPaise = ln.principalPaise + simpleInterestPaise;
+                    const outstandingBalancePaise = ln.totalOutstandingAsOfTodayPaise;
+
+                    return (
+                      <tr key={ln.id} className="hover:bg-white/60">
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-slate-900">{ln.farmerName}</div>
+                          <div className="text-[11px] font-mono text-slate-500">{ln.farmerCode} · {ln.loanNo}</div>
+                        </td>
+                        <td className="py-3 px-3 font-mono text-slate-700">
+                          <div>{formatDateDDMMYYYY(ln.disbursementDate)}</div>
+                          <div className="text-[10px] text-slate-400">{(ln.interestRateBps / 100).toFixed(2)}% SI</div>
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-semibold text-slate-800">
+                          {formatINR(ln.principalPaise)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-medium text-amber-700">
+                          {formatINR(simpleInterestPaise)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-semibold text-slate-900">
+                          {formatINR(totalAmountPaise)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-bold text-rose-700">
+                          {formatINR(outstandingBalancePaise)}
+                        </td>
+                        <td className="py-3 px-3 text-center font-mono font-semibold">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] ${
+                              ln.status === 'CLOSED'
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : ln.status === 'ACTIVE'
+                                ? 'bg-blue-50 text-blue-700'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {ln.status}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="inline-flex items-center gap-2 justify-end">
+                            {ln.status === 'ACTIVE' && canPostReceipts && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedFarmerForRecovery(ln.farmerId);
+                                  setShowRecoverModal(true);
+                                  setRecoverAmountRupees(String(ln.totalOutstandingAsOfTodayPaise / 100));
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-semibold border border-emerald-200"
+                              >
+                                Recover
+                              </button>
+                            )}
                             <button
                               type="button"
-                              onClick={() => {
-                                setRepayingLoan(ln);
-                                setRepayAmountRupees(
-                                  String(ln.principalOutstandingPaise / 100)
-                                );
-                              }}
-                              className="text-emerald-700 hover:text-emerald-900 font-semibold"
+                              onClick={() => setInspectedLoan(ln)}
+                              className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 font-semibold"
                             >
-                              Record Repayment
+                              Schedule
                             </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setInspectedLoan(ln)}
-                            className="text-blue-600 hover:text-blue-800 font-semibold"
-                          >
-                            Schedule
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
           </div>
+
+          {/* Modal: Recover Loan + Interest (Task 4) */}
+          {showRecoverModal && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs"
+              onClick={() => {
+                if (!isRecoverSubmitting) setShowRecoverModal(false);
+              }}
+            >
+              <div
+                className="w-full max-w-2xl bg-white rounded-3xl p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center">
+                      <ArrowDownLeft className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">
+                        Recover Loan + Interest (SRS Section 4)
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Settle accrued simple interest and principal against farmer loans
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isRecoverSubmitting}
+                    onClick={() => setShowRecoverModal(false)}
+                    className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleRecoverLoanAndInterestSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Select Farmer with Outstanding Loans
+                    </label>
+                    <select
+                      required
+                      value={selectedFarmerForRecovery}
+                      onChange={(e) => {
+                        const nextFid = e.target.value;
+                        setSelectedFarmerForRecovery(nextFid);
+                        const matching = loans.filter((l) => l.farmerId === nextFid && l.status === 'ACTIVE');
+                        const tot = matching.reduce((s, l) => s + l.totalOutstandingAsOfTodayPaise, 0);
+                        setRecoverAmountRupees(tot > 0 ? String(tot / 100) : '');
+                      }}
+                      className="apple-input w-full text-xs font-medium"
+                    >
+                      <option value="">-- Choose Farmer --</option>
+                      {farmers.map((f) => {
+                        const activeCount = loans.filter((l) => l.farmerId === f.id && l.status === 'ACTIVE').length;
+                        return (
+                          <option key={f.id} value={f.id}>
+                            {f.name} ({f.partyCode}) {activeCount > 0 ? `· ${activeCount} active loan(s)` : '· (No active loans)'}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {selectedFarmerForRecovery && farmerActiveLoans.length > 0 ? (
+                    <div className="space-y-4">
+                      {/* Pre-Recovery Breakdown Cards */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                          <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                            Principal
+                          </div>
+                          <div className="text-sm font-bold text-slate-800 font-mono mt-0.5">
+                            {formatINR(recoveryAgg.principal)}
+                          </div>
+                        </div>
+                        <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200">
+                          <div className="text-[10px] font-semibold text-amber-700 uppercase tracking-wider">
+                            Accrued Interest
+                          </div>
+                          <div className="text-sm font-bold text-amber-800 font-mono mt-0.5">
+                            {formatINR(recoveryAgg.interest)}
+                          </div>
+                        </div>
+                        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                          <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                            Total Due
+                          </div>
+                          <div className="text-sm font-bold text-slate-900 font-mono mt-0.5">
+                            {formatINR(recoveryAgg.totalDue)}
+                          </div>
+                        </div>
+                        <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200">
+                          <div className="text-[10px] font-semibold text-rose-700 uppercase tracking-wider">
+                            Outstanding Balance
+                          </div>
+                          <div className="text-sm font-bold text-rose-800 font-mono mt-0.5">
+                            {formatINR(recoveryAgg.totalDue)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Active Loans Table */}
+                      <div className="rounded-2xl border border-slate-200 overflow-hidden text-xs">
+                        <table className="w-full text-left">
+                          <thead className="bg-slate-50 text-[11px] text-slate-600 font-semibold border-b border-slate-200">
+                            <tr>
+                              <th className="py-2 px-3">Loan No & Date</th>
+                              <th className="py-2 px-3 text-right">Principal</th>
+                              <th className="py-2 px-3 text-right">Accrued Interest</th>
+                              <th className="py-2 px-3 text-right">Total Outstanding</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-mono">
+                            {farmerActiveLoans.map((l) => (
+                              <tr key={l.id} className="hover:bg-slate-50/60">
+                                <td className="py-2 px-3 font-sans">
+                                  <span className="font-bold text-blue-600 font-mono">{l.loanNo}</span>
+                                  <span className="text-slate-400 ml-1.5 font-mono text-[11px]">
+                                    {formatDateDDMMYYYY(l.disbursementDate)}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-3 text-right">{formatINR(l.principalOutstandingPaise)}</td>
+                                <td className="py-2 px-3 text-right text-amber-700">
+                                  {formatINR(l.accruedInterestAsOfTodayPaise || 0)}
+                                </td>
+                                <td className="py-2 px-3 text-right font-bold text-slate-900">
+                                  {formatINR(l.totalOutstandingAsOfTodayPaise)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Recovery Inputs */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            Recovery Date
+                          </label>
+                          <input
+                            type="date"
+                            required
+                            value={recoverDate}
+                            onChange={(e) => setRecoverDate(e.target.value)}
+                            className="apple-input w-full font-mono text-xs"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-semibold text-slate-700">
+                              Amount Recovered (₹)
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setRecoverAmountRupees(String(recoveryAgg.totalDue / 100))}
+                              className="text-[11px] font-semibold text-emerald-700 hover:underline"
+                            >
+                              Full: {formatINR(recoveryAgg.totalDue)}
+                            </button>
+                          </div>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            required
+                            placeholder="0.00"
+                            value={recoverAmountRupees}
+                            onChange={(e) => setRecoverAmountRupees(e.target.value)}
+                            className="apple-input w-full font-mono text-sm font-bold"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            Payment Mode
+                          </label>
+                          <select
+                            value={recoverPaymentMode}
+                            onChange={(e) => setRecoverPaymentMode(e.target.value as LoanPaymentMode)}
+                            className="apple-input w-full text-xs font-medium"
+                          >
+                            <option value="CASH">Cash in Hand (1001)</option>
+                            <option value="BANK_TRANSFER">Bank Transfer / UPI (1002)</option>
+                            <option value="CHEQUE">Cheque Collection</option>
+                          </select>
+                        </div>
+
+                        {recoverPaymentMode !== 'CASH' && (
+                          <div>
+                            <label className="block text-xs font-semibold text-slate-700 mb-1">
+                              Receiving Bank Account
+                            </label>
+                            <select
+                              required
+                              value={recoverBankAccountId}
+                              onChange={(e) => setRecoverBankAccountId(e.target.value)}
+                              className="apple-input w-full text-xs font-medium"
+                            >
+                              {bankAccounts.map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {b.accountLabel} · {b.bankName} ({b.accountNumberMasked})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">
+                            Recovery Reference / Notes
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Loan recovery via harvest settlement / cash deposit"
+                            value={recoverNotes}
+                            onChange={(e) => setRecoverNotes(e.target.value)}
+                            className="apple-input w-full text-xs"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-200">
+                        <button
+                          type="button"
+                          disabled={isRecoverSubmitting}
+                          onClick={() => setShowRecoverModal(false)}
+                          className="px-4 py-2 rounded-xl bg-slate-100 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isRecoverSubmitting}
+                          className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-500 disabled:opacity-50 inline-flex items-center gap-1.5 shadow-xs"
+                        >
+                          {isRecoverSubmitting ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <ArrowDownLeft className="w-3.5 h-3.5" />
+                          )}
+                          Record Loan Recovery & Post Khata
+                        </button>
+                      </div>
+                    </div>
+                  ) : selectedFarmerForRecovery ? (
+                    <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-2xl border border-slate-200">
+                      No active outstanding loans found for this farmer.
+                    </div>
+                  ) : null}
+                </form>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

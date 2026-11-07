@@ -42,7 +42,7 @@ import {
   StockMovementRecord,
   UserProfile,
 } from '../shared/types';
-import { formatDateDDMMYYYY, formatINR, rupeesToPaise } from '../shared/math';
+import { formatDateDDMMYYYY, formatINR, formatTime12Hour, isSameDayInIST, rupeesToPaise } from '../shared/math';
 import { LanguageCode } from '../shared/i18n';
 
 export type DashboardTrendWindow = '7D' | '30D' | '3M' | '6M' | '1Y';
@@ -103,6 +103,7 @@ interface DashboardViewProps {
     narration: string;
     lines: JournalLineInput[];
   }) => Promise<void>;
+  onRefresh?: () => Promise<void> | void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -126,6 +127,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onRecordBuyerCollection,
   onRecordExpenseOrCommitment,
   onPostJournalEntry,
+  onRefresh,
 }) => {
   const [trendWindow, setTrendWindow] = useState<DashboardTrendWindow>('7D');
   const [dateFilterFrom, setDateFilterFrom] = useState<string>('');
@@ -133,6 +135,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [quickModal, setQuickModal] = useState<
     'NONE' | 'RECEIVE_MONEY' | 'MAKE_PAYMENT' | 'MANDI_EXPENSES'
   >('NONE');
+
+  // Real-time periodic auto-refresh for live floor activity (Task 1)
+  React.useEffect(() => {
+    if (!onRefresh) return;
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        onRefresh();
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [onRefresh]);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
     null
   );
@@ -439,128 +452,156 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return buckets;
   }, [trendWindow, businessDate, cashCreditBills, kharidiPattis, dalaliKharidiPattis]);
 
-  // 6. Live Floor Feed (Chronological recent saved transactions)
+  // 6. Live Floor Feed (Strictly isolated to current businessDate in IST & floor commodity activities)
   const liveFloorFeed = useMemo(() => {
     const items: Array<{
       id: string;
-      badge: 'S' | 'P' | 'C' | 'E' | 'M';
+      badge: 'S' | 'P' | 'R' | 'M';
+      commodityName: string;
+      transactionType: 'Arrival' | 'Purchase' | 'Sale' | 'Stock Movement';
+      quantity: number;
+      unit: string;
+      lotOrRefId: string;
+      amountPaise: number | null;
+      transactionTime: string;
       title: string;
       subtitle: string;
-      amountPaise: number;
       isPositive: boolean;
       createdAt: string;
-      targetSection:
-        | 'pattis'
-        | 'stock'
-        | 'operations_reports'
-        | 'khata'
-        | 'loans_bank';
+      targetSection: 'pattis' | 'stock';
     }> = [];
 
     cashCreditBills.forEach((b) => {
+      const createdIso = b.createdAt || `${b.billDate}T12:00:00Z`;
+      if (!isSameDayInIST(createdIso, businessDate)) return;
+      const cmdName = b.items?.map((i) => i.commodityNameEn).filter(Boolean).join(', ') || 'Commodity';
+      const refId = b.billNo.toUpperCase().startsWith('LOT') ? b.billNo : `LOT ${b.billNo}`;
+      const timeStr = formatTime12Hour(createdIso);
       items.push({
         id: `CB-${b.id}`,
         badge: 'S',
-        title: `Sold Item · ${b.buyerName}`,
-        subtitle: `LOT ${b.billNo}`,
+        commodityName: cmdName,
+        transactionType: 'Sale',
+        quantity: b.totalBags,
+        unit: 'Bags',
+        lotOrRefId: refId,
         amountPaise: b.netBillAmountPaise,
+        transactionTime: timeStr,
+        title: `Sold Item · ${cmdName}`,
+        subtitle: `${refId} (${b.totalBags} Bags)`,
         isPositive: true,
-        createdAt: b.createdAt || `${b.billDate}T12:00:00Z`,
+        createdAt: createdIso,
         targetSection: 'pattis',
       });
     });
 
     kharidiPattis.forEach((p) => {
+      const createdIso = p.createdAt || `${p.invoiceDate}T12:00:00Z`;
+      if (!isSameDayInIST(createdIso, businessDate)) return;
+      const cmdName = p.items?.map((i) => i.commodityNameEn).filter(Boolean).join(', ') || 'Commodity';
+      const refId = p.invoiceNo.toUpperCase().startsWith('LOT') ? p.invoiceNo : `LOT ${p.invoiceNo}`;
+      const timeStr = formatTime12Hour(createdIso);
       items.push({
         id: `KP-${p.id}`,
         badge: 'S',
-        title: `Sold Item · ${p.buyerName}`,
-        subtitle: `LOT ${p.invoiceNo}`,
+        commodityName: cmdName,
+        transactionType: 'Sale',
+        quantity: p.totalBags,
+        unit: 'Bags',
+        lotOrRefId: refId,
         amountPaise: p.netReceivablePaise,
+        transactionTime: timeStr,
+        title: `Sold Item · ${cmdName}`,
+        subtitle: `${refId} (${p.totalBags} Bags)`,
         isPositive: true,
-        createdAt: p.createdAt || `${p.invoiceDate}T12:00:00Z`,
+        createdAt: createdIso,
         targetSection: 'pattis',
       });
     });
 
     dalaliKharidiPattis.forEach((p) => {
+      const createdIso = p.createdAt || `${p.pattiDate}T12:00:00Z`;
+      if (!isSameDayInIST(createdIso, businessDate)) return;
+      const cmdName = p.items?.map((i) => i.commodityNameEn).filter(Boolean).join(', ') || 'Commodity';
+      const refId = p.pattiNo.toUpperCase().startsWith('LOT') ? p.pattiNo : `LOT ${p.pattiNo}`;
+      const timeStr = formatTime12Hour(createdIso);
       items.push({
         id: `DK-${p.id}`,
         badge: 'S',
-        title: `Dalali Sale · ${p.buyerName}`,
-        subtitle: `LOT ${p.pattiNo}`,
+        commodityName: cmdName,
+        transactionType: 'Sale',
+        quantity: p.totalBags,
+        unit: 'Bags',
+        lotOrRefId: refId,
         amountPaise: p.netReceivablePaise,
+        transactionTime: timeStr,
+        title: `Dalali Sale · ${cmdName}`,
+        subtitle: `${refId} (${p.totalBags} Bags)`,
         isPositive: true,
-        createdAt: p.createdAt || `${p.pattiDate}T12:00:00Z`,
+        createdAt: createdIso,
         targetSection: 'pattis',
       });
     });
 
     farmerPattis.forEach((p) => {
+      const createdIso = p.createdAt || `${p.pattiDate}T12:00:00Z`;
+      if (!isSameDayInIST(createdIso, businessDate)) return;
+      const cmdName = p.items?.map((i) => i.commodityNameEn).filter(Boolean).join(', ') || 'Commodity';
+      const refId = p.pattiNo.toUpperCase().startsWith('LOT') ? p.pattiNo : `LOT ${p.pattiNo}`;
+      const timeStr = formatTime12Hour(createdIso);
       items.push({
         id: `FP-${p.id}`,
         badge: 'P',
-        title: `Farmer Patti · ${p.farmerName}`,
-        subtitle: `LOT ${p.pattiNo}`,
-        amountPaise: p.netPayablePaise,
+        commodityName: cmdName,
+        transactionType: 'Purchase',
+        quantity: p.totalBags,
+        unit: 'Bags',
+        lotOrRefId: refId,
+        amountPaise: p.grossCropAmountPaise,
+        transactionTime: timeStr,
+        title: `Purchase · ${cmdName}`,
+        subtitle: `${refId} (${p.totalBags} Bags)`,
         isPositive: false,
-        createdAt: p.createdAt || `${p.pattiDate}T12:00:00Z`,
+        createdAt: createdIso,
         targetSection: 'pattis',
       });
     });
 
-    buyerCollections.forEach((c) => {
-      items.push({
-        id: `COL-${c.id}`,
-        badge: 'C',
-        title: `Received · ${c.buyerName}`,
-        subtitle: `RCPT ${c.receiptNo}`,
-        amountPaise: c.amountPaise,
-        isPositive: true,
-        createdAt: c.createdAt || `${c.receiptDate}T12:00:00Z`,
-        targetSection: 'operations_reports',
-      });
-    });
-
-    expensesCommitments
-      .filter((e) => !e.isRestrictedPersonal)
-      .forEach((e) => {
-        items.push({
-          id: `EXP-${e.id}`,
-          badge: 'E',
-          title: `Expense · ${e.payeeName}`,
-          subtitle: `VCH ${e.voucherNo}`,
-          amountPaise: e.totalAmountPaise,
-          isPositive: false,
-          createdAt: e.createdAt || `${e.voucherDate}T12:00:00Z`,
-          targetSection: 'operations_reports',
-        });
-      });
-
     stockMovements.forEach((m) => {
+      const createdIso = m.createdAt || `${m.transactionDate}T12:00:00Z`;
+      if (!isSameDayInIST(createdIso, businessDate)) return;
       const cmdName = commodityNameById.get(m.commodityId) || 'Commodity';
+      const refId = m.movementNo.toUpperCase().startsWith('LOT') ? m.movementNo : `LOT ${m.movementNo}`;
+      const isArrival = m.direction === 'GOODS_IN';
+      const qtyBags = Math.abs(m.bagsDelta || 0);
+      const timeStr = formatTime12Hour(createdIso);
       items.push({
         id: `MOV-${m.id}`,
-        badge: 'M',
-        title: `${m.direction === 'GOODS_IN' ? 'Arrival' : 'Dispatch'} · ${cmdName}`,
-        subtitle: `LOT ${m.movementNo}`,
-        amountPaise: m.totalValuePaise,
-        isPositive: m.direction !== 'GOODS_IN',
-        createdAt: m.createdAt || `${m.transactionDate}T12:00:00Z`,
+        badge: isArrival ? 'R' : 'M',
+        commodityName: cmdName,
+        transactionType: isArrival ? 'Arrival' : 'Stock Movement',
+        quantity: qtyBags,
+        unit: 'Bags',
+        lotOrRefId: refId,
+        amountPaise: m.totalValuePaise > 0 ? m.totalValuePaise : null,
+        transactionTime: timeStr,
+        title: isArrival ? `Received ${cmdName}` : `Movement · ${cmdName}`,
+        subtitle: `${refId} (${qtyBags} Bags)`,
+        isPositive: !isArrival,
+        createdAt: createdIso,
         targetSection: 'stock',
       });
     });
 
     return items
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 12);
+      .slice(0, 20);
   }, [
+    businessDate,
     cashCreditBills,
     kharidiPattis,
     dalaliKharidiPattis,
     farmerPattis,
-    buyerCollections,
-    expensesCommitments,
     stockMovements,
     commodityNameById,
   ]);
@@ -1122,13 +1163,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div className="text-right shrink-0">
                     <div
                       className={`text-xs font-extrabold font-mono ${
-                        item.isPositive ? 'text-emerald-600' : 'text-slate-800'
+                        item.amountPaise !== null && item.isPositive ? 'text-emerald-600' : 'text-slate-800'
                       }`}
                     >
-                      {formatINR(item.amountPaise, false)}
+                      {item.amountPaise !== null
+                        ? formatINR(item.amountPaise, false)
+                        : `${item.quantity} ${item.unit}`}
                     </div>
-                    <div className="text-[10px] text-slate-400">
-                      {formatDateDDMMYYYY(item.createdAt.slice(0, 10))}
+                    <div className="text-[10px] text-slate-500 font-mono font-medium">
+                      {item.transactionTime || formatDateDDMMYYYY(item.createdAt.slice(0, 10))}
                     </div>
                   </div>
                 </div>

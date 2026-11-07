@@ -1234,7 +1234,7 @@ export const StockStatusView: React.FC<StockStatusViewProps> = ({
                 placeholder="Enter bags count"
                 value={movBags}
                 onChange={(e) => setMovBags(e.target.value)}
-                className="apple-input w-full font-mono"
+                className="apple-input w-full min-w-[100px] font-mono text-base font-semibold px-2.5"
               />
             </div>
 

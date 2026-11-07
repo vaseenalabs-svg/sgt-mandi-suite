@@ -498,6 +498,13 @@ export class CorePlatformService {
       stockValuationMethod: row.stock_valuation_method as CompanySettings['stockValuationMethod'],
       interestPolicy: JSON.parse(String(row.interest_policy_json)),
       commissionHamaliPolicy: JSON.parse(String(row.commission_hamali_policy_json)),
+      statutoryChargePolicy: (row as any).statutory_charge_policy_json
+        ? JSON.parse(String((row as any).statutory_charge_policy_json))
+        : {
+            defaultRmcPercentage: 1.5,
+            defaultCessPercentage: 0.5,
+            calculationBasis: 'VALUE',
+          },
       customLabels: JSON.parse(String(row.custom_labels_json)),
       approvalThresholds: JSON.parse(String(row.approval_thresholds_json)),
       version: Number(row.version),
@@ -515,7 +522,7 @@ export class CorePlatformService {
     actor: UserProfile;
   }): CompanySettings {
     // Check permission: rate/policy changes require MANAGE_RATES_AND_POLICIES or MANAGE_SETTINGS
-    const policyKeys = new Set(['interestPolicy', 'commissionHamaliPolicy', 'roundingMode']);
+    const policyKeys = new Set(['interestPolicy', 'commissionHamaliPolicy', 'statutoryChargePolicy', 'roundingMode']);
     const updateKeys = Object.keys(params.updates).filter(
       (k) => params.updates[k as keyof typeof params.updates] !== undefined
     );
@@ -553,6 +560,9 @@ export class CorePlatformService {
         commissionHamaliPolicy: params.updates.commissionHamaliPolicy
           ? { ...current.commissionHamaliPolicy, ...params.updates.commissionHamaliPolicy }
           : current.commissionHamaliPolicy,
+        statutoryChargePolicy: params.updates.statutoryChargePolicy
+          ? { ...(current.statutoryChargePolicy || { defaultRmcPercentage: 1.5, defaultCessPercentage: 0.5, calculationBasis: 'VALUE' }), ...params.updates.statutoryChargePolicy }
+          : current.statutoryChargePolicy,
         customLabels: params.updates.customLabels
           ? { ...current.customLabels, ...params.updates.customLabels }
           : current.customLabels,

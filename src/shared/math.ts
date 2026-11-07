@@ -467,3 +467,69 @@ export function calculateInterest(input: InterestCalculationInput): InterestCalc
     segments,
   };
 }
+
+/**
+ * Formats ISO or Date string to 12-hour local IST time (e.g., '09:55 PM').
+ */
+export function formatTime12Hour(isoOrDateStr: string): string {
+  if (!isoOrDateStr) return '';
+  const date = new Date(isoOrDateStr);
+  if (isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).format(date);
+}
+
+/**
+ * Checks whether an ISO string or YYYY-MM-DD date falls on the specified business date in Indian Standard Time (Asia/Kolkata).
+ */
+export function isSameDayInIST(dateOrIsoStr: string, targetDateYYYYMMDD: string): boolean {
+  if (!dateOrIsoStr || !targetDateYYYYMMDD) return false;
+  if (dateOrIsoStr.length === 10) {
+    return dateOrIsoStr === targetDateYYYYMMDD;
+  }
+  const date = new Date(dateOrIsoStr);
+  if (isNaN(date.getTime())) {
+    return dateOrIsoStr.startsWith(targetDateYYYYMMDD);
+  }
+  const istDateStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+  return istDateStr === targetDateYYYYMMDD;
+}
+
+/**
+ * Centralized statutory charge calculator (RMC, CESS, Mandi Market Fee).
+ * Stores/calculates both percentage rate and computed deduction amount in paise.
+ */
+export function calculateStatutoryCharge(
+  baseAmountPaiseOrWeightGrams: number,
+  percentageRate: number,
+  calculationBasis: 'VALUE' | 'WEIGHT' = 'VALUE'
+): { ratePercentage: number; deductionAmountPaise: number } {
+  if (
+    !Number.isFinite(baseAmountPaiseOrWeightGrams) ||
+    baseAmountPaiseOrWeightGrams <= 0 ||
+    !Number.isFinite(percentageRate) ||
+    percentageRate <= 0
+  ) {
+    return { ratePercentage: Math.max(0, percentageRate || 0), deductionAmountPaise: 0 };
+  }
+  let calculatedPaise = 0;
+  if (calculationBasis === 'WEIGHT') {
+    const quintals = baseAmountPaiseOrWeightGrams / 100000;
+    calculatedPaise = Math.round(quintals * (percentageRate * 100));
+  } else {
+    calculatedPaise = Math.round((baseAmountPaiseOrWeightGrams * percentageRate) / 100);
+  }
+  return {
+    ratePercentage: percentageRate,
+    deductionAmountPaise: Math.max(0, calculatedPaise),
+  };
+}

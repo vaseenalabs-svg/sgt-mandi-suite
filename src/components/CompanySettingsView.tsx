@@ -588,6 +588,54 @@ export const CompanySettingsView: React.FC<CompanySettingsViewProps> = ({
                     <option value="FIFO">First-In First-Out (FIFO)</option>
                   </select>
                 </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Default RMC / Cess (%)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    disabled={!canEditPolicy}
+                    value={formState.statutoryChargePolicy?.defaultRmcPercentage ?? 1.5}
+                    onChange={(e) =>
+                      setFormState({
+                        ...formState,
+                        statutoryChargePolicy: {
+                          defaultRmcPercentage: Number(e.target.value),
+                          defaultCessPercentage: formState.statutoryChargePolicy?.defaultCessPercentage ?? 0.5,
+                          calculationBasis: formState.statutoryChargePolicy?.calculationBasis ?? 'VALUE',
+                        },
+                      })
+                    }
+                    className="apple-input w-full font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">
+                    Statutory Charge Basis
+                  </label>
+                  <select
+                    disabled={!canEditPolicy}
+                    value={formState.statutoryChargePolicy?.calculationBasis ?? 'VALUE'}
+                    onChange={(e) =>
+                      setFormState({
+                        ...formState,
+                        statutoryChargePolicy: {
+                          defaultRmcPercentage: formState.statutoryChargePolicy?.defaultRmcPercentage ?? 1.5,
+                          defaultCessPercentage: formState.statutoryChargePolicy?.defaultCessPercentage ?? 0.5,
+                          calculationBasis: e.target.value as 'VALUE' | 'WEIGHT',
+                        },
+                      })
+                    }
+                    className="apple-input w-full"
+                  >
+                    <option value="VALUE">Gross Transaction Value (%)</option>
+                    <option value="WEIGHT">Weight / Quintals Basis</option>
+                  </select>
+                </div>
               </div>
 
               {showAdvancedLabels && (
